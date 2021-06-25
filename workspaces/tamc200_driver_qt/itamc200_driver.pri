@@ -1,9 +1,6 @@
 
 # 
 
-include ($${PWD}/itamc200_driver.pri)
-
-TEMPLATE = aux
 
 CONFIG -= app_bundle
 CONFIG -= qt
@@ -28,7 +25,3 @@ INCLUDEPATH += $${LINUX_HEADERS_PATH}/include
 INCLUDEPATH += $$system(find -L $$SRC_PROJECT_PATH -type d)
 INCLUDEPATH += $$system(find -L $$LINUX_HEADERS_PATH/include -type d)
 INCLUDEPATH += $$system(find -L $$LINUX_HEADERS_PATH/arch/$$ARCH/include -type d)
-
-
-SOURCES +=	\
-        $${SRC_PROJECT_PATH}/entry_tamc200_driver.c

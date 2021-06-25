@@ -9,32 +9,23 @@
 
 #define	TAMC200_NR_DEVS		16
 
-#define DEVNAME				"tamc200"	/* name of device */
-#define DRV_NAME			"timer_drv"	/* name of device */
+#define DEVNAME				"tamc200"       /* name of device */
+#define DRV_NAME			"tamc200_drv"	/* name of device */
 
 
-//#define	IP_TIMER_WHOLE_BUFFER_SIZE_ALL	IP_TIMER_WHOLE_BUFFER_SIZE
 #define	IP_TIMER_WHOLE_BUFFER_SIZE_ALL	1024
-#if 0
-#define	_ALLOC_MEMORY_(_a_flag_)		kzalloc(IP_TIMER_WHOLE_BUFFER_SIZE_ALL,(_a_flag_))
-#define	_DEALLOC_MEMORY_(_a_memory_)	kfree((_a_memory_))
-#else
+//#define	_ALLOC_MEMORY_(_a_flag_)		kzalloc(IP_TIMER_WHOLE_BUFFER_SIZE_ALL,(_a_flag_))
+//#define	_DEALLOC_MEMORY_(_a_memory_)	kfree((_a_memory_))
 #define	_ALLOC_MEMORY_(_a_flag_)		(void*)get_zeroed_page((_a_flag_))
 #define	_DEALLOC_MEMORY_(_a_memory_)	free_page((unsigned long int)(_a_memory_))
-#endif
 
 
 #include <linux/module.h>
-#include <linux/delay.h>
-//#include <linux/kthread.h>
-//#include "mtcagen_exp.h"
-//#include "debug_functions.h"
-//#include "version_dependence.h"
-//#include "adc_timer_interface_io.h"
-//#include "iptimer_io.h"
+#include <linux/fs.h>
+#include <pciedev_ufn.h>
 
 #ifdef __INTELISENSE__
-#include "../../used_for_driver_intelisense.h"
+#include "../../include/used_for_driver_intelisense.h"
 #endif
 
 
@@ -44,42 +35,39 @@ MODULE_DESCRIPTION("Driver for TEWS TAMC200 IP carrier");
 MODULE_VERSION("1.1.0");
 MODULE_LICENSE("Dual BSD/GPL");
 
-
-struct STamc200
-{
-    struct pciedev_dev*			dev;
-    void*						sharedAddress;
-    unsigned int				istimer[TAMC200_NR_SLOTS] /*: TAMC200_NR_SLOTS*/;
-    struct SIrqWaiterStruct		irqWaiterStruct;
-    long						event_num;
-    int							added_event : 2;
-    int							added_wait_irq : 2;
-    int							deviceIrqAddress2;
+struct STamc200{
+    struct pciedev_dev  dev;
+    void*				sharedAddress;
+    int					deviceIrqAddress;
 };
 
-static struct file_operations	s_tamc200FileOps /*= g_default_mtcagen_fops_exp*/;
+static long  tamc200_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
 
 
-#define		DEBUG_TIMING
-#ifdef DEBUG_TIMING
-#define NSEC_FROM_TIMESPEC(_a_timespec_,_a_timespec_end_)	\
-    ((u_int64_t)((u_int64_t)((_a_timespec_end_).tv_sec-(_a_timespec_).tv_sec)*1000000000L+\
-    (u_int64_t)((_a_timespec_end_).tv_nsec - (_a_timespec_).tv_nsec)))
-//#define	MS_FROM_TIMEVAL(_a_timeval_)			(((u_int64_t)(_a_timeval_).tv_sec)*1000L + ((u_int64_t)(_a_timeval_).tv_usec)/1000L )
-//#define	REMNANT_MS_FROM_TIMEVAL(_a_timeval_)	(((u_int64_t)(_a_timeval_).tv_usec)%1000L)
 
-struct STimingTest	s_TimingTest = {
-    .iterations = 0L,
-    .total_time = 0L };
-#endif
+static const struct file_operations s_tamc200FileOps = {
+    .owner                  =  THIS_MODULE,
+    .read                     =  pciedev_read_exp,
+    .write                    =  pciedev_write_exp,
+    .unlocked_ioctl           =  tamc200_ioctl,
+    .open                    =  pciedev_open_exp,
+    .release                =  pciedev_release_exp,
+    .mmap                 = pciedev_remap_mmap_exp,
+};
+
+
+static long  tamc200_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+    return 0;
+}
+
 
 struct STamc200       s_vTamc200_dev[TAMC200_NR_DEVS];	/* allocated in iptimer_init_module */
 static int s_ips_irq_vec[3] = { 0xFC, 0xFD, 0xFE };
 
-static int s_nOtherDeviceInterrupt = 0;
 /*
-* The top-half interrupt handler.
-*/
+ * The top-half interrupt handler.
+ */
 #if LINUX_VERSION_CODE < 0x20613 // irq_handler_t has changed in 2.6.19
 static irqreturn_t tamc200_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 #else
@@ -88,45 +76,34 @@ static irqreturn_t tamc200_interrupt(int irq, void *dev_id)
 {
     struct STamc200 * pTamc200 = dev_id;
     int* pnBufferIndex = (int*)pTamc200->sharedAddress;
-    //int nNextBufferIndex = (*pnBufferIndex + 1) % IP_TIMER_RING_BUFFERS_COUNT;
     int nNextBufferIndex ;
-    char* deviceBar2Address = (char*)pTamc200->dev->memmory_base[2];
-    char* deviceBar3Address = (char*)pTamc200->dev->memmory_base[3] + pTamc200->deviceIrqAddress2;
+    char* deviceBar2Address = (char*)pTamc200->dev.memmory_base[2];
+    char* deviceBar3Address = (char*)pTamc200->dev.memmory_base[3] + pTamc200->deviceIrqAddress;
     //char* deviceBar3Address = pTamc200->deviceIrqAddress;
     char* ip_base_addres;
     struct STimeTelegram* pTimeTelegram ;
     struct timeval	aTv;
     u16 uEvLow;
     u16 uEvHigh;
-#ifdef DEBUG_TIMING
-    struct timespec	aTvEnd, aTvBeg;
-    getnstimeofday(&aTvBeg);
-#endif
 
-    //if(dev->vendor_id  != TAMC200_VENDOR_ID)   return IRQ_NONE;
-    //if(dev->device_id  != TAMC200_DEVICE_ID)   return IRQ_NONE;
-    // make shure, this is correct interrupt
+    (void)irq;
 
     do_gettimeofday(&aTv);
 
-#if 1
     uEvLow = ioread16(deviceBar2Address + 0xC);
     smp_rmb();
-    if (uEvLow == 0){ s_nOtherDeviceInterrupt++; return IRQ_NONE; }
-#endif
+    if (uEvLow == 0){ return IRQ_NONE; }
 
-    /// Piti nayvi Should be modified
+    // Piti nayvi Should be modified
     ip_base_addres = deviceBar3Address;
 
-    uEvLow = ioread16(ip_base_addres + 0x40);///? should be modified
-    //uEvLow = ioread16(ip_base_addres + 0x240);
+    uEvLow = ioread16(ip_base_addres + 0x40);//? should be modified
     smp_rmb();
-    if (pTamc200->dev->swap){ uEvLow=UPCIEDEV_SWAPS(uEvLow); }
+    if (pTamc200->dev.swap){ uEvLow=UPCIEDEV_SWAPS(uEvLow); }
 
-    uEvHigh = ioread16(ip_base_addres + 0x42);///? should be modified
-    //uEvHigh = ioread16(ip_base_addres + 0x242);
+    uEvHigh = ioread16(ip_base_addres + 0x42);//? should be modified
     smp_rmb();
-    if (pTamc200->dev->swap){ uEvHigh=UPCIEDEV_SWAPS(uEvHigh); }
+    if (pTamc200->dev.swap){ uEvHigh=UPCIEDEV_SWAPS(uEvHigh); }
 
     pTamc200->event_num = (long)uEvHigh;
     pTamc200->event_num <<= 16;
@@ -158,20 +135,8 @@ static irqreturn_t tamc200_interrupt(int irq, void *dev_id)
     iowrite16(0xFFFF, ip_base_addres + 0x3A);
     smp_wmb();
 
-#ifdef DEBUG_TIMING
-    getnstimeofday(&aTvEnd);
-    //do_gettimeofday(&aTvEnd);
-    s_TimingTest.iterations++;
-    s_TimingTest.current_time = NSEC_FROM_TIMESPEC(aTvBeg, aTvEnd);
-    s_TimingTest.total_time += s_TimingTest.current_time;
-
-    ++pTamc200->irqWaiterStruct.numberOfIRQs;
-    wake_up(&pTamc200->irqWaiterStruct.waitIRQ);
-#endif
-
     return IRQ_HANDLED;
 }
-
 
 
 static void DisableAllInterrupts(struct STamc200* a_pTamc200)
@@ -336,9 +301,9 @@ static void RemoveFunction(struct pciedev_dev* a_dev, void* a_pData)
 
 
 
-//static int __devinit tamc200_probe(struct pci_dev *dev, const struct pci_device_id *id)
+static int __devinit tamc200_probe(struct pci_dev *a_dev, const struct pci_device_id *id)
 //int __devinit tamc200_probe(struct pci_dev *dev, const struct pci_device_id *id)
-static int ProbeFunction(struct pciedev_dev* a_dev, void* a_pData)
+//static int ProbeFunction(struct pciedev_dev* a_dev, void* a_pData)
 {
     char*	deviceBar2Address;
     char*	deviceBar3Address;
