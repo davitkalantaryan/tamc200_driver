@@ -9,8 +9,8 @@
 
 #define	TAMC200_NR_DEVS		16
 
-#define DEVNAME				"tamc200"       /* name of device */
-#define DRV_NAME			"tamc200_drv"	/* name of device */
+#define TAMC200_DEVNAME		"tamc200"       /* name of device */
+#define TAMC200_DRV_NAME	"tamc200_drv"	/* name of device */
 
 
 #define	IP_TIMER_WHOLE_BUFFER_SIZE_ALL	1024
@@ -22,28 +22,47 @@
 
 #include <linux/module.h>
 #include <linux/fs.h>
+#include <linux/mm.h>
 #include <pciedev_ufn.h>
+#include <debug_functions.h>
+#include "tamc200_io.h"
 
 #ifdef __INTELISENSE__
 #include "../../include/used_for_driver_intelisense.h"
 #endif
-
-
 
 MODULE_AUTHOR("Davit Kalantaryan");
 MODULE_DESCRIPTION("Driver for TEWS TAMC200 IP carrier");
 MODULE_VERSION("1.1.0");
 MODULE_LICENSE("Dual BSD/GPL");
 
+#define TAMC200_VENDOR_ID    0x10B5	/* TEWS vendor ID */
+#define TAMC200_DEVICE_ID    0x9030	/* IP carrier board device ID */
+#define TAMC200_SUBVENDOR_ID 0x1498	/* TEWS vendor ID */
+#define TAMC200_SUBDEVICE_ID 0x80C8	/* IP carrier board device ID */
+
+
 struct STamc200{
     struct pciedev_dev  dev;
     void*				sharedAddress;
     int					deviceIrqAddress;
+    int                 numberOfIRQs;
+    enum EIpCarrierType carrierType[TAMC200_NR_CARRIERS];
+    u32                 event_num;
+    u32                 isIrqActive : 1;
+    u32                 u32remainingBits : 31;
+    wait_queue_head_t	waitIRQ;
 };
 
 static long  tamc200_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
+static int tamc200_mmap(struct file *a_filp, struct vm_area_struct *a_vma);
+static int __devinit tamc200_probe(struct pci_dev *a_dev, const struct pci_device_id *id);
 
-
+static const struct pci_device_id s_tamc200_ids[]  = {
+    { TAMC200_VENDOR_ID, TAMC200_DEVICE_ID,TAMC200_SUBVENDOR_ID, TAMC200_SUBDEVICE_ID, 0, 0, 0},
+    { 0, }
+};
+MODULE_DEVICE_TABLE(pci, esdadio_ids);
 
 static const struct file_operations s_tamc200FileOps = {
     .owner                  =  THIS_MODULE,
@@ -52,8 +71,60 @@ static const struct file_operations s_tamc200FileOps = {
     .unlocked_ioctl           =  tamc200_ioctl,
     .open                    =  pciedev_open_exp,
     .release                =  pciedev_release_exp,
-    .mmap                 = pciedev_remap_mmap_exp,
+    .mmap                 = tamc200_mmap,
 };
+
+static const struct pci_driver pci_esdadio_driver = {
+    .name       = TAMC200_DRV_NAME,
+    .id_table   = s_tamc200FileOps,
+    .probe      = tamc200_probe,
+    .remove    = __devexit_p(esdadio_remove),
+};
+
+static void tamc200_vma_open  (struct vm_area_struct *a_vma) { (void)a_vma; }
+static void tamc200_vma_close (struct vm_area_struct *a_vma) { (void)a_vma; }
+
+
+static const struct vm_operations_struct tamc200_mmap_vm_ops =
+{
+    .open = tamc200_vma_open,
+    .close = tamc200_vma_close,
+    //.fault = daq_vma_fault,	// Finally page fault exception should be used to do
+    // page size changing really dynamic
+};
+
+
+static int tamc200_mmap(struct file *a_filp, struct vm_area_struct *a_vma)
+{
+    struct pciedev_dev*		dev = a_filp->private_data;
+    struct STamc200*		pTamc200 = dev->parent;
+    unsigned long sizeFrUser = a_vma->vm_end - a_vma->vm_start;
+
+    if(sizeFrUser == (unsigned long)SIZE_FOR_INTR_SHMEM){
+        unsigned long sizeOrig = IP_TIMER_WHOLE_BUFFER_SIZE_ALL;
+        unsigned int size = sizeFrUser>sizeOrig ? sizeOrig : sizeFrUser;
+
+        ALERTCT("\n");
+
+        if (!pTamc200->sharedAddress){
+            ERRCT("device is not registered for interrupts\n");
+            return -ENODEV;
+        }
+
+        if (remap_pfn_range(a_vma, a_vma->vm_start, virt_to_phys((void *)pTamc200->sharedAddress) >> PAGE_SHIFT, size, a_vma->vm_page_prot) < 0){
+            ERRCT("remap_pfn_range failed\n");
+            return -EIO;
+        }
+
+        a_vma->vm_private_data = pTamc200;
+        a_vma->vm_ops = &tamc200_mmap_vm_ops;
+        tamc200_vma_open(a_vma);
+
+        return 0;
+    }
+
+    return pciedev_remap_mmap_exp(a_filp,a_vma);
+}
 
 
 static long  tamc200_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
@@ -69,24 +140,22 @@ static int s_ips_irq_vec[3] = { 0xFC, 0xFD, 0xFE };
  * The top-half interrupt handler.
  */
 #if LINUX_VERSION_CODE < 0x20613 // irq_handler_t has changed in 2.6.19
-static irqreturn_t tamc200_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+static irqreturn_t tamc200_interrupt(int a_irq, void *a_dev_id, struct pt_regs *regs)
 #else
-static irqreturn_t tamc200_interrupt(int irq, void *dev_id)
+static irqreturn_t tamc200_interrupt(int a_irq, void *a_dev_id)
 #endif
 {
-    struct STamc200 * pTamc200 = dev_id;
+    struct STamc200 * pTamc200 = a_dev_id;
     int* pnBufferIndex = (int*)pTamc200->sharedAddress;
     int nNextBufferIndex ;
     char* deviceBar2Address = (char*)pTamc200->dev.memmory_base[2];
-    char* deviceBar3Address = (char*)pTamc200->dev.memmory_base[3] + pTamc200->deviceIrqAddress;
-    //char* deviceBar3Address = pTamc200->deviceIrqAddress;
-    char* ip_base_addres;
+    char* ip_base_addres = (char*)pTamc200->dev.memmory_base[3] + pTamc200->deviceIrqAddress;
     struct STimeTelegram* pTimeTelegram ;
     struct timeval	aTv;
     u16 uEvLow;
     u16 uEvHigh;
 
-    (void)irq;
+    (void)a_irq;
 
     do_gettimeofday(&aTv);
 
@@ -94,14 +163,11 @@ static irqreturn_t tamc200_interrupt(int irq, void *dev_id)
     smp_rmb();
     if (uEvLow == 0){ return IRQ_NONE; }
 
-    // Piti nayvi Should be modified
-    ip_base_addres = deviceBar3Address;
-
-    uEvLow = ioread16(ip_base_addres + 0x40);//? should be modified
+    uEvLow = ioread16(ip_base_addres + 0x40);//?
     smp_rmb();
     if (pTamc200->dev.swap){ uEvLow=UPCIEDEV_SWAPS(uEvLow); }
 
-    uEvHigh = ioread16(ip_base_addres + 0x42);//? should be modified
+    uEvHigh = ioread16(ip_base_addres + 0x42);//?
     smp_rmb();
     if (pTamc200->dev.swap){ uEvHigh=UPCIEDEV_SWAPS(uEvHigh); }
 
@@ -110,29 +176,20 @@ static irqreturn_t tamc200_interrupt(int irq, void *dev_id)
     pTamc200->event_num |= (long)uEvLow;
 
     nNextBufferIndex = pTamc200->event_num % IP_TIMER_RING_BUFFERS_COUNT;
-    //nNextBufferIndex = (nNextBufferIndex + 1) % IP_TIMER_RING_BUFFERS_COUNT;
-    //nNextBufferIndex = snBufferIndex % IP_TIMER_RING_BUFFERS_COUNT;
     pTimeTelegram = (struct STimeTelegram*)((char*)pTamc200->sharedAddress + _OFFSET_TO_SPECIFIC_BUFFER_(nNextBufferIndex));
 
     pTimeTelegram->gen_event = (int)pTamc200->event_num;
     pTimeTelegram->seconds = aTv.tv_sec;
     pTimeTelegram->useconds = aTv.tv_usec;
-    //*((int*)((char*)pTamc200->sharedAddress + _OFFSET_TO_SPECIFIC_BUFFER_(nNextBufferIndex))) = pTamc200->event_num;
 
     *pnBufferIndex = nNextBufferIndex;
-#ifndef DEBUG_TIMING
-    ++pTamc200->irqWaiterStruct.numberOfIRQs;
-    wake_up(&pTamc200->irqWaiterStruct.waitIRQ);
-#endif
+    ++pTamc200->numberOfIRQs;
+    wake_up(&pTamc200->waitIRQ);
 
-    /// Piti nayvi Should be modified
-    iowrite16(0xFFFF, deviceBar2Address + 0xC);
+    iowrite16(0xFFFF, deviceBar2Address + 0xC); //?
     smp_wmb();
 
-    /// Piti nayvi
-    ///ip_base_addres = deviceBar3Address;///? should be modified
-    //ip_base_addres = deviceBar3Address + 0x200;
-    iowrite16(0xFFFF, ip_base_addres + 0x3A);
+    iowrite16(0xFFFF, ip_base_addres + 0x3A); //?
     smp_wmb();
 
     return IRQ_HANDLED;
@@ -141,28 +198,22 @@ static irqreturn_t tamc200_interrupt(int irq, void *dev_id)
 
 static void DisableAllInterrupts(struct STamc200* a_pTamc200)
 {
-
     ALERTCT("\n");
 
-    if (a_pTamc200->irqWaiterStruct.isIrqActive)
-    {
-        //free_irq(tamc200_dev->pci_dev_irq, tamc200_dev);
-        free_irq(a_pTamc200->dev->pci_dev_irq, a_pTamc200);
-        if (a_pTamc200->added_wait_irq)RemoveEntryFromGlobalContainer(IPTIMER_WAITERS);
-        if (a_pTamc200->added_event)RemoveEntryFromGlobalContainer(IPTIMER_GENEVNT);
-        //kfree(a_pTamc200->sharedAddress);
+    if (a_pTamc200->isIrqActive){
+        free_irq(a_pTamc200->dev.pci_dev_irq, a_pTamc200);
         _DEALLOC_MEMORY_(a_pTamc200->sharedAddress);
-        a_pTamc200->irqWaiterStruct.isIrqActive = 0;
+        a_pTamc200->isIrqActive = 0;
     }
-    a_pTamc200->dev->irq_type = _NO_IRQ_;
+    a_pTamc200->dev.irq_type = 0;
 }
 
 
 
 static int EnableInterrupt(struct STamc200* a_pTamc200, int a_IpModule)
 {
-    char*	deviceBar2Address = (char*)(a_pTamc200->dev->memmory_base[2]);
-    char*	deviceBar3Address = (char*)(a_pTamc200->dev->memmory_base[3]);
+    char*	deviceBar2Address = (char*)(a_pTamc200->dev.memmory_base[2]);
+    char*	deviceBar3Address = (char*)(a_pTamc200->dev.memmory_base[3]);
     char*	ip_base_addres = deviceBar3Address + 0x100 * a_IpModule;
     int nReturn = 0;
     u16 tmp_slot_cntrl = 0;
@@ -171,76 +222,37 @@ static int EnableInterrupt(struct STamc200* a_pTamc200, int a_IpModule)
 
     a_IpModule = a_IpModule > 2 ? 2 : (a_IpModule < 0 ? 0 : a_IpModule);
 
-    //if (tamc200_dev[tmp_slot_num].ip_s[k].irq_on)
-    {
-        if (a_pTamc200->irqWaiterStruct.isIrqActive == 0)
-        {
-            ALERTCT(KERN_ALERT "IRQ FOR IP MODULE %i ENABLED\n", a_IpModule);
-            //if(tamc200_dev[tmp_slot_num].ip_s[k].irq_lev)
-            {
-                //    tmp_slot_cntrl   |= 0x0080;
-                //}else{
-                //    tmp_slot_cntrl   |= 0x0040;
-                //}
-                tmp_slot_cntrl |= (1 & 0x3) << 6;
-            }
-            //if(tamc200_dev[tmp_slot_num].ip_s[k].irq_sens)
-            if (1)
-            {
-                tmp_slot_cntrl |= 0x0020;
-            }
-            else
-            {
-                tmp_slot_cntrl |= 0x0010;
-            }
+    if (!a_pTamc200->isIrqActive){
+        ALERTCT(KERN_ALERT "IRQ FOR IP MODULE %i ENABLED\n", a_IpModule);
+        tmp_slot_cntrl |= (1 & 0x3) << 6;
+        tmp_slot_cntrl |= 0x0020;
 
-            //a_pTamc200->sharedAddress = kzalloc(IP_TIMER_WHOLE_BUFFER_SIZE, GFP_KERNEL);
-            //a_pTamc200->sharedAddress = kzalloc(IP_TIMER_WHOLE_BUFFER_SIZE_ALL, GFP_KERNEL);
-            a_pTamc200->sharedAddress = _ALLOC_MEMORY_(GFP_KERNEL);
-
-            if (!a_pTamc200->sharedAddress)
-            {
-                ERRCT("No memory!\n");
-                return -1;
-            }
-            *((int*)a_pTamc200->sharedAddress) = IP_TIMER_RING_BUFFERS_COUNT-1;
-
-            /// New
-            a_pTamc200->deviceIrqAddress2 = a_IpModule * 0x100;
-
-            init_waitqueue_head(&a_pTamc200->irqWaiterStruct.waitIRQ);
-            //nReturn = request_irq(a_pTamc200->dev->pci_dev_irq, &tamc200_interrupt, IRQF_SHARED | IRQF_DISABLED, DRV_NAME, a_pTamc200);
-            //IRQF_DISABLED - keep irqs disabled when calling the action handler.
-            //                 DEPRECATED.This flag is a NOOP and scheduled to be removed
-            //nReturn = request_irq(a_pTamc200->dev->pci_dev_irq, &tamc200_interrupt, IRQF_SHARED | IRQF_DISABLED, DRV_NAME, a_pTamc200);
-            nReturn = request_irq(a_pTamc200->dev->pci_dev_irq, &tamc200_interrupt, IRQF_SHARED , DRV_NAME, a_pTamc200);
-            if (nReturn)
-            {
-                ERRCT("Unable to activate interrupt for pin %d\n", a_pTamc200->dev->pci_dev_irq);
-                return nReturn;
-            }
-
-            a_pTamc200->irqWaiterStruct.isIrqActive = 1;
-            a_pTamc200->irqWaiterStruct.numberOfIRQs = 0;
-#if 0
-        added_event : 2;
-            int							added_wait_irq;
-#endif
-            ALERTCT("\n");
-            if (AddNewEntryToGlobalContainer(&a_pTamc200->event_num, IPTIMER_GENEVNT) == 0){ a_pTamc200->added_event = 1; }
-            ALERTCT("\n");
-            if (AddNewEntryToGlobalContainer(&a_pTamc200->irqWaiterStruct, IPTIMER_WAITERS) == 0){ a_pTamc200->added_wait_irq = 1; }
-            ALERTCT("\n");
-            a_pTamc200->dev->irq_type = _IRQ_TYPE2_;
+        a_pTamc200->sharedAddress = _ALLOC_MEMORY_(GFP_KERNEL);
+        if (!a_pTamc200->sharedAddress){
+            ERRCT("No memory!\n");
+            return -1;
         }
 
-        //printk(KERN_ALERT "TAMC200_PROBE:  SLOT %i CNTRL %X\n", k, tmp_slot_cntrl);
-        iowrite16(tmp_slot_cntrl, deviceBar2Address + 0x2 * (a_IpModule + 1));
-        smp_wmb();
-        iowrite16(s_ips_irq_vec[a_IpModule], (ip_base_addres + 0x2E));
-        smp_wmb();
+        *((int*)a_pTamc200->sharedAddress) = IP_TIMER_RING_BUFFERS_COUNT-1;
+        a_pTamc200->deviceIrqAddress = a_IpModule * 0x100;
+        init_waitqueue_head(&a_pTamc200->waitIRQ);
+        nReturn = request_irq(a_pTamc200->dev.pci_dev_irq, &tamc200_interrupt, IRQF_SHARED , DRV_NAME, a_pTamc200);
+        if (nReturn){
+            ERRCT("Unable to activate interrupt for pin %d\n", a_pTamc200->dev.pci_dev_irq);
+            return nReturn;
+        }
 
+        a_pTamc200->isIrqActive = 1;
+        a_pTamc200->numberOfIRQs = 0;
+        ALERTCT("\n");
+        a_pTamc200->dev.irq_type = 2;
     }
+
+    //printk(KERN_ALERT "TAMC200_PROBE:  SLOT %i CNTRL %X\n", k, tmp_slot_cntrl);
+    iowrite16(tmp_slot_cntrl, deviceBar2Address + 0x2 * (a_IpModule + 1));
+    smp_wmb();
+    iowrite16(s_ips_irq_vec[a_IpModule], (ip_base_addres + 0x2E));
+    smp_wmb();
 
     return 0;
 }
@@ -249,14 +261,14 @@ static int EnableInterrupt(struct STamc200* a_pTamc200, int a_IpModule)
 static void RemoveFunction(struct pciedev_dev* a_dev, void* a_pData)
 {
     struct STamc200*		pTamc200 = a_dev->parent;
-    char* deviceBar2Address = (char*)pTamc200->dev->memmory_base[2];
-    char* deviceBar3Address = (char*)pTamc200->dev->memmory_base[3];
+    char* deviceBar2Address = (char*)pTamc200->dev.memmory_base[2];
+    char* deviceBar3Address = (char*)pTamc200->dev.memmory_base[3];
     char* ip_base_addres;
-    int                    k = 0;
+    int   k;
 
     ALERTCT( "SLOT %d BOARD %d\n", a_dev->slot_num, a_dev->brd_num);
 
-    /*DISABLING INTERRUPTS ON THE MODULE*/
+    /*DISABLING INTERRUPTS ON THE MODULES*/
     iowrite16(0x0000, deviceBar2Address + 0x2);
     iowrite16(0x0000, deviceBar2Address + 0x4);
     iowrite16(0x0000, deviceBar2Address + 0x6);
@@ -264,38 +276,36 @@ static void RemoveFunction(struct pciedev_dev* a_dev, void* a_pData)
 
     DisableAllInterrupts(pTamc200);
 
-    for(k = 0; k < TAMC200_NR_SLOTS; k++)
-    {
-        //if(tamc200_dev->ip_s[k].ip_on)
-        {
-            ip_base_addres = (char *)deviceBar3Address + 0x100*k;
-            //if(tamc200_dev->ip_s[k].ip_module_type == IPTIMER)
-            if (pTamc200->istimer[k])
-            {
-                iowrite16(0, (ip_base_addres + 0x2A));
-                smp_wmb();
-                iowrite16(0xFFFF, (ip_base_addres + 0x2A));
-                smp_wmb();
-                iowrite16(0xFFFF, (ip_base_addres + 0x20));
-                smp_wmb();
-                iowrite16(0xFFFF, (ip_base_addres + 0x22));
-                smp_wmb();
-                iowrite16(0xFFFF, (ip_base_addres + 0x24));
-                smp_wmb();
-                iowrite16(0xFFFF, (ip_base_addres + 0x26));
-                smp_wmb();
-                iowrite16(0x0, (ip_base_addres + 0x28));
-                smp_wmb();
-                iowrite16(0xFFFF, (ip_base_addres + 0x2C));
-                smp_wmb();
-            } // if (pTamc200->istimer[k])
-        }
-    } // for(k = 0; k < TAMC200_NR_SLOTS; k++)
+    for(k = 0; k < TAMC200_NR_CARRIERS; ++k){
+        switch(pTamc200->carrierType[k]){
+        case IpCarrierDelayGate:{
+            ip_base_addres = (char*)deviceBar3Address + 0x100*k;
+            iowrite16(0x0000, (ip_base_addres + 0x2A));
+            smp_wmb();
+            iowrite16(0xFFFF, (ip_base_addres + 0x2A));
+            smp_wmb();
+            iowrite16(0xFFFF, (ip_base_addres + 0x20));
+            smp_wmb();
+            iowrite16(0xFFFF, (ip_base_addres + 0x22));
+            smp_wmb();
+            iowrite16(0xFFFF, (ip_base_addres + 0x24));
+            smp_wmb();
+            iowrite16(0xFFFF, (ip_base_addres + 0x26));
+            smp_wmb();
+            iowrite16(0x0000, (ip_base_addres + 0x28));
+            smp_wmb();
+            iowrite16(0xFFFF, (ip_base_addres + 0x2C));
+            smp_wmb();
+        }break;
+        default:
+            break;
+        }  // switch(pTamc200->carrierType[k]){
+    } // for(k = 0; k < TAMC200_NR_SLOTS; ++k)
 
     memset(pTamc200, 0, sizeof(struct STamc200));
     Mtcagen_remove_exp(a_dev, 0, NULL);
 
-    ////////////////////////////////////////////////////////////////////
+    /*//////////////////////////////////////////////////////////////////*/
 
 }
 
