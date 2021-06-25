@@ -1,0 +1,11 @@
+
+
+  Todo:
+ 1. export pciedev_llseek from upciedev driver
+ 2. lines below potentially can crash appliation (file:pciedev_ufn.c,line:~206)
+    cdev_del(&pciedev_cdev_m->pciedev_dev_m[k]->cdev);
+    if(pciedev_cdev_m->pciedev_dev_m[k]){
+        kfree(pciedev_cdev_m->pciedev_dev_m[k]);
+        pciedev_cdev_m->pciedev_dev_m[k] = 0;
+    }
+

@@ -10,7 +10,7 @@
 #define	TAMC200_NR_DEVS		16
 
 #define TAMC200_DEVNAME		"tamc200"       /* name of device */
-#define TAMC200_DRV_NAME	"tamc200_drv"	/* name of device */
+#define TAMC200_DRV_NAME	"tamc200"       /* name of device */
 
 
 #define	IP_TIMER_WHOLE_BUFFER_SIZE_ALL	1024
@@ -23,9 +23,12 @@
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/mm.h>
+#include <linux/pci.h>
 #include <pciedev_ufn.h>
+#include "pciedev_ufn2.h"
 #include <debug_functions.h>
 #include "tamc200_io.h"
+#include "linux_version_dependence.h"
 
 #ifdef __INTELISENSE__
 #include "../../include/used_for_driver_intelisense.h"
@@ -54,9 +57,12 @@ struct STamc200{
     wait_queue_head_t	waitIRQ;
 };
 
-static long  tamc200_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
-static int tamc200_mmap(struct file *a_filp, struct vm_area_struct *a_vma);
-static int __devinit tamc200_probe(struct pci_dev *a_dev, const struct pci_device_id *id);
+static long           tamc200_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
+static int            tamc200_mmap(struct file *a_filp, struct vm_area_struct *a_vma);
+static int  __devinit tamc200_probe(struct pci_dev *a_dev, const struct pci_device_id *id);
+static void __devexit tamc200_remove(struct pci_dev *dev);
+
+static struct pciedev_cdev s_tamc200_cdev={0,};
 
 static const struct pci_device_id s_tamc200_ids[]  = {
     { TAMC200_VENDOR_ID, TAMC200_DEVICE_ID,TAMC200_SUBVENDOR_ID, TAMC200_SUBDEVICE_ID, 0, 0, 0},
@@ -65,27 +71,28 @@ static const struct pci_device_id s_tamc200_ids[]  = {
 MODULE_DEVICE_TABLE(pci, esdadio_ids);
 
 static const struct file_operations s_tamc200FileOps = {
-    .owner                  =  THIS_MODULE,
+    .owner                    =  THIS_MODULE,
     .read                     =  pciedev_read_exp,
     .write                    =  pciedev_write_exp,
     .unlocked_ioctl           =  tamc200_ioctl,
-    .open                    =  pciedev_open_exp,
-    .release                =  pciedev_release_exp,
-    .mmap                 = tamc200_mmap,
+    .open                     =  pciedev_open_exp,
+    .release                  =  pciedev_release_exp,
+    .mmap                     =  tamc200_mmap,
+    .llseek                   =  pciedev_llseek_exp
 };
 
-static const struct pci_driver pci_esdadio_driver = {
+static struct pci_driver s_tamc200_driver = {
     .name       = TAMC200_DRV_NAME,
-    .id_table   = s_tamc200FileOps,
+    .id_table   = s_tamc200_ids,
     .probe      = tamc200_probe,
-    .remove    = __devexit_p(esdadio_remove),
+    .remove    = __devexit_p(tamc200_remove),
 };
 
 static void tamc200_vma_open  (struct vm_area_struct *a_vma) { (void)a_vma; }
 static void tamc200_vma_close (struct vm_area_struct *a_vma) { (void)a_vma; }
 
 
-static const struct vm_operations_struct tamc200_mmap_vm_ops =
+static const struct vm_operations_struct s_tamc200_mmap_vm_ops =
 {
     .open = tamc200_vma_open,
     .close = tamc200_vma_close,
@@ -117,7 +124,7 @@ static int tamc200_mmap(struct file *a_filp, struct vm_area_struct *a_vma)
         }
 
         a_vma->vm_private_data = pTamc200;
-        a_vma->vm_ops = &tamc200_mmap_vm_ops;
+        a_vma->vm_ops = &s_tamc200_mmap_vm_ops;
         tamc200_vma_open(a_vma);
 
         return 0;
@@ -127,23 +134,13 @@ static int tamc200_mmap(struct file *a_filp, struct vm_area_struct *a_vma)
 }
 
 
-static long  tamc200_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
-{
-    return 0;
-}
-
-
 struct STamc200       s_vTamc200_dev[TAMC200_NR_DEVS];	/* allocated in iptimer_init_module */
-static int s_ips_irq_vec[3] = { 0xFC, 0xFD, 0xFE };
+static const int      s_ips_irq_vec[3] = { 0xFC, 0xFD, 0xFE };
 
 /*
  * The top-half interrupt handler.
  */
-#if LINUX_VERSION_CODE < 0x20613 // irq_handler_t has changed in 2.6.19
-static irqreturn_t tamc200_interrupt(int a_irq, void *a_dev_id, struct pt_regs *regs)
-#else
-static irqreturn_t tamc200_interrupt(int a_irq, void *a_dev_id)
-#endif
+static irqreturn_t tamc200_interrupt(INTR_ARGS(int a_irq, void *a_dev_id, struct pt_regs* a_regs))
 {
     struct STamc200 * pTamc200 = a_dev_id;
     int* pnBufferIndex = (int*)pTamc200->sharedAddress;
@@ -156,6 +153,7 @@ static irqreturn_t tamc200_interrupt(int a_irq, void *a_dev_id)
     u16 uEvHigh;
 
     (void)a_irq;
+    UNWARN_INTR_LAST_ARG(a_regs)
 
     do_gettimeofday(&aTv);
 
@@ -236,7 +234,7 @@ static int EnableInterrupt(struct STamc200* a_pTamc200, int a_IpModule)
         *((int*)a_pTamc200->sharedAddress) = IP_TIMER_RING_BUFFERS_COUNT-1;
         a_pTamc200->deviceIrqAddress = a_IpModule * 0x100;
         init_waitqueue_head(&a_pTamc200->waitIRQ);
-        nReturn = request_irq(a_pTamc200->dev.pci_dev_irq, &tamc200_interrupt, IRQF_SHARED , DRV_NAME, a_pTamc200);
+        nReturn = request_irq(a_pTamc200->dev.pci_dev_irq, &tamc200_interrupt, IRQF_SHARED , TAMC200_DRV_NAME, a_pTamc200);
         if (nReturn){
             ERRCT("Unable to activate interrupt for pin %d\n", a_pTamc200->dev.pci_dev_irq);
             return nReturn;
@@ -258,63 +256,65 @@ static int EnableInterrupt(struct STamc200* a_pTamc200, int a_IpModule)
 }
 
 
-static void RemoveFunction(struct pciedev_dev* a_dev, void* a_pData)
+static void __devexit tamc200_remove(struct pci_dev* a_dev)
 {
-    struct STamc200*		pTamc200 = a_dev->parent;
-    char* deviceBar2Address = (char*)pTamc200->dev.memmory_base[2];
-    char* deviceBar3Address = (char*)pTamc200->dev.memmory_base[3];
-    char* ip_base_addres;
-    int   k;
+    pciedev_dev* pciedevdev = dev_get_drvdata(&(a_dev->dev));
+    if(pciedevdev && pciedevdev->dev_sts){
+        struct STamc200*		pTamc200 = container_of(pciedevdev, struct STamc200, dev);
+        char* deviceBar2Address = (char*)pTamc200->dev.memmory_base[2];
+        char* deviceBar3Address = (char*)pTamc200->dev.memmory_base[3];
+        char* ip_base_addres;
+        int   k;
+        int   tmp_slot_num;
 
-    ALERTCT( "SLOT %d BOARD %d\n", a_dev->slot_num, a_dev->brd_num);
+        ALERTCT( "SLOT %d BOARD %d\n", pciedevdev->slot_num, pciedevdev->brd_num);
 
-    /*DISABLING INTERRUPTS ON THE MODULES*/
-    iowrite16(0x0000, deviceBar2Address + 0x2);
-    iowrite16(0x0000, deviceBar2Address + 0x4);
-    iowrite16(0x0000, deviceBar2Address + 0x6);
-    smp_wmb();
+        /*DISABLING INTERRUPTS ON THE MODULES*/
+        iowrite16(0x0000, deviceBar2Address + 0x2);
+        iowrite16(0x0000, deviceBar2Address + 0x4);
+        iowrite16(0x0000, deviceBar2Address + 0x6);
+        smp_wmb();
 
-    DisableAllInterrupts(pTamc200);
+        DisableAllInterrupts(pTamc200);
 
-    for(k = 0; k < TAMC200_NR_CARRIERS; ++k){
-        switch(pTamc200->carrierType[k]){
-        case IpCarrierDelayGate:{
-            ip_base_addres = (char*)deviceBar3Address + 0x100*k;
-            iowrite16(0x0000, (ip_base_addres + 0x2A));
-            smp_wmb();
-            iowrite16(0xFFFF, (ip_base_addres + 0x2A));
-            smp_wmb();
-            iowrite16(0xFFFF, (ip_base_addres + 0x20));
-            smp_wmb();
-            iowrite16(0xFFFF, (ip_base_addres + 0x22));
-            smp_wmb();
-            iowrite16(0xFFFF, (ip_base_addres + 0x24));
-            smp_wmb();
-            iowrite16(0xFFFF, (ip_base_addres + 0x26));
-            smp_wmb();
-            iowrite16(0x0000, (ip_base_addres + 0x28));
-            smp_wmb();
-            iowrite16(0xFFFF, (ip_base_addres + 0x2C));
-            smp_wmb();
-        }break;
-        default:
-            break;
-        }  // switch(pTamc200->carrierType[k]){
-    } // for(k = 0; k < TAMC200_NR_SLOTS; ++k)
+        for(k = 0; k < TAMC200_NR_CARRIERS; ++k){
+            switch(pTamc200->carrierType[k]){
+            case IpCarrierDelayGate:{
+                ip_base_addres = (char*)deviceBar3Address + 0x100*k;
+                iowrite16(0x0000, (ip_base_addres + 0x2A));
+                smp_wmb();
+                iowrite16(0xFFFF, (ip_base_addres + 0x2A));
+                smp_wmb();
+                iowrite16(0xFFFF, (ip_base_addres + 0x20));
+                smp_wmb();
+                iowrite16(0xFFFF, (ip_base_addres + 0x22));
+                smp_wmb();
+                iowrite16(0xFFFF, (ip_base_addres + 0x24));
+                smp_wmb();
+                iowrite16(0xFFFF, (ip_base_addres + 0x26));
+                smp_wmb();
+                iowrite16(0x0000, (ip_base_addres + 0x28));
+                smp_wmb();
+                iowrite16(0xFFFF, (ip_base_addres + 0x2C));
+                smp_wmb();
+            }break;
+            default:
+                break;
+            }  // switch(pTamc200->carrierType[k]){
+        } // for(k = 0; k < TAMC200_NR_SLOTS; ++k)
 
-    memset(pTamc200, 0, sizeof(struct STamc200));
-    Mtcagen_remove_exp(a_dev, 0, NULL);
-
-    /*//////////////////////////////////////////////////////////////////*/
-
+        memset(pTamc200, 0, sizeof(struct STamc200));
+        pciedev_remove_exp(a_dev,&s_tamc200_cdev, TAMC200_DEVNAME, &tmp_slot_num);
+    }
 }
 
 
-
-static int __devinit tamc200_probe(struct pci_dev *a_dev, const struct pci_device_id *id)
-//int __devinit tamc200_probe(struct pci_dev *dev, const struct pci_device_id *id)
-//static int ProbeFunction(struct pciedev_dev* a_dev, void* a_pData)
+static int __devinit tamc200_probe(struct pci_dev* a_dev, const struct pci_device_id* a_id)
 {
+    int tmp_brd_num;
+    //int result = pciedev_probe_exp(a_dev,a_id,&s_tamc200FileOps,&s_tamc200_cdev,TAMC200_DEVNAME,&tmp_brd_num);
+    int result = pciedev_probe_exp(a_dev,a_id,NULL,&s_tamc200_cdev,TAMC200_DEVNAME,&tmp_brd_num);
+
     char*	deviceBar2Address;
     char*	deviceBar3Address;
     char*  ip_base_addres;
@@ -387,36 +387,6 @@ static struct vm_operations_struct tamc200_mmap_vm_ops =
     //.fault = daq_vma_fault,	// Finally page fault exception should be used to do
     // page size changing really dynamoc
 };
-
-
-static int tamc200_mmap(struct file *a_filp, struct vm_area_struct *a_vma)
-{
-    struct pciedev_dev*		dev = a_filp->private_data;
-    struct STamc200*		pTamc200 = dev->parent;
-    unsigned long sizeFrUser = a_vma->vm_end - a_vma->vm_start;
-    unsigned long sizeOrig = IP_TIMER_WHOLE_BUFFER_SIZE_ALL;
-    unsigned int size = sizeFrUser>sizeOrig ? sizeOrig : sizeFrUser;
-
-    ALERTCT("\n");
-
-    if (!pTamc200->sharedAddress)
-    {
-        ERRCT("device is not registered for interrupts\n");
-        return -ENODEV;
-    }
-
-    if (remap_pfn_range(a_vma, a_vma->vm_start, virt_to_phys((void *)pTamc200->sharedAddress) >> PAGE_SHIFT, size, a_vma->vm_page_prot) < 0)
-    {
-        ERRCT("remap_pfn_range failed\n");
-        return -EIO;
-    }
-
-    a_vma->vm_private_data = pTamc200;
-    a_vma->vm_ops = &tamc200_mmap_vm_ops;
-    tamc200_vma_open(a_vma);
-
-    return 0;
-}
 
 
 static long  tamc200_ioctl(struct file *a_filp, unsigned int a_cmd, unsigned long a_arg)
@@ -496,8 +466,6 @@ returnPoint:
 }
 
 
-static struct SDeviceParams s_DevParam;
-
 void __exit tamc200_cleanup_module(void)
 {
     ALERTCT("\n");
@@ -506,31 +474,18 @@ void __exit tamc200_cleanup_module(void)
 
 static int __init tamc200_init_module(void)
 {
+    int result;
     ALERTCT("\n");
     memset(s_vTamc200_dev, 0, sizeof(s_vTamc200_dev));
+    result = upciedev_driver_init_exp(&s_tamc200_cdev,&s_tamc200FileOps,TAMC200_DEVNAME);
+    pci_register_driver(&s_tamc200_driver);
 
-    printk(KERN_ALERT "!!!!!!!!!!!!!!! __USER_CS=%d(0x%x), __USER_DS=%d(0x%x), __KERNEL_CS=%d(%d), __KERNEL_DS=%d(%d)\n",
+    printk(KERN_ALERT "!!!!!!!!!!!!!!! __USER_CS=%d(0x%x), __USER_DS=%d(0x%x), __KERNEL_CS=%d(%d), __KERNEL_DS=%d(0x%x)\n",
         (int)__USER_CS, (int)__USER_CS, (int)__USER_DS, (int)__USER_DS, (int)__KERNEL_CS, (int)__KERNEL_CS, (int)__KERNEL_DS, (int)__KERNEL_DS);
 
-    ALERTCT("============= version 9:\n");
+    ALERTCT("============= version 10:, result=%d\n",result);
 
-    DEVICE_PARAM_RESET(&s_DevParam);
-    s_DevParam.vendor = TAMC200_VENDOR_ID;
-    s_DevParam.device = TAMC200_DEVICE_ID;
-    s_DevParam.subsystem_vendor = TAMC200_SUBVENDOR_ID;
-    s_DevParam.subsystem_device = TAMC200_SUBDEVICE_ID;
-
-    memcpy(&s_tamc200FileOps, &g_default_mtcagen_fops_exp, sizeof(struct file_operations));
-    s_tamc200FileOps.owner = THIS_MODULE;
-    s_tamc200FileOps.compat_ioctl = s_tamc200FileOps.unlocked_ioctl = &tamc200_ioctl;
-    s_tamc200FileOps.mmap = &tamc200_mmap;
-
-    registerDeviceToMainDriver(&s_DevParam, &ProbeFunction, &RemoveFunction, NULL);
-
-    ///?
-    printk(KERN_ALERT "!!!!!!!!!!!!!! registerDeviceToMainDriver done!!!\n");
-
-    return 0; /* succeed */
+    return result; /* succeed when result==0*/
 }
 
 module_init(tamc200_init_module);

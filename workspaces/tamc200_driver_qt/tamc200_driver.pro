@@ -32,7 +32,9 @@ INCLUDEPATH += $$system(find -L $$LINUX_HEADERS_PATH/arch/$$ARCH/include -type d
 
 
 SOURCES +=	\
-        $${SRC_PROJECT_PATH}/entry_tamc200_driver.c
+        $${SRC_PROJECT_PATH}/entry_tamc200_driver.c				\
+	$${SRC_PROJECT_PATH}/pciedev_ufn2.c
 
 HEADERS +=	\
-        $${SRC_PROJECT_PATH}/tamc200_io.h
+        $${SRC_PROJECT_PATH}/pciedev_ufn2.h				\
+	$${SRC_PROJECT_PATH}/tamc200_io.h
