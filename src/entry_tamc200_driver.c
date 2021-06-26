@@ -7,7 +7,7 @@
  *
  */
 
-#define	TAMC200_NR_DEVS		16
+#define	TAMC200_NR_DEVS		(PCIEDEV_NR_DEVS + 1)
 
 #define TAMC200_DEVNAME		"tamc200"       /* name of device */
 #define TAMC200_DRV_NAME	"tamc200"       /* name of device */
@@ -46,7 +46,7 @@ MODULE_LICENSE("Dual BSD/GPL");
 
 
 struct STamc200{
-    struct pciedev_dev  dev;
+    pciedev_dev         dev;
     void*				sharedAddress;
     int					deviceIrqAddress;
     int                 numberOfIRQs;
@@ -68,7 +68,7 @@ static const struct pci_device_id s_tamc200_ids[]  = {
     { TAMC200_VENDOR_ID, TAMC200_DEVICE_ID,TAMC200_SUBVENDOR_ID, TAMC200_SUBDEVICE_ID, 0, 0, 0},
     { 0, }
 };
-MODULE_DEVICE_TABLE(pci, esdadio_ids);
+MODULE_DEVICE_TABLE(pci, s_tamc200_ids);
 
 static const struct file_operations s_tamc200FileOps = {
     .owner                    =  THIS_MODULE,
@@ -87,6 +87,9 @@ static struct pci_driver s_tamc200_driver = {
     .probe      = tamc200_probe,
     .remove    = __devexit_p(tamc200_remove),
 };
+
+struct STamc200       s_vTamc200_dev[TAMC200_NR_DEVS];	/* allocated in iptimer_init_module */
+static const int      s_ips_irq_vec[3] = { 0xFC, 0xFD, 0xFE };
 
 static void tamc200_vma_open  (struct vm_area_struct *a_vma) { (void)a_vma; }
 static void tamc200_vma_close (struct vm_area_struct *a_vma) { (void)a_vma; }
@@ -134,9 +137,6 @@ static int tamc200_mmap(struct file *a_filp, struct vm_area_struct *a_vma)
 }
 
 
-struct STamc200       s_vTamc200_dev[TAMC200_NR_DEVS];	/* allocated in iptimer_init_module */
-static const int      s_ips_irq_vec[3] = { 0xFC, 0xFD, 0xFE };
-
 /*
  * The top-half interrupt handler.
  */
@@ -160,6 +160,10 @@ static irqreturn_t tamc200_interrupt(INTR_ARGS(int a_irq, void *a_dev_id, struct
     uEvLow = ioread16(deviceBar2Address + 0xC);
     smp_rmb();
     if (uEvLow == 0){ return IRQ_NONE; }
+
+    // after this, we should check which carrier module
+    // interrupted, and make following steps, if the type is
+    // delay gate generator
 
     uEvLow = ioread16(ip_base_addres + 0x40);//?
     smp_rmb();

@@ -38,3 +38,11 @@ SOURCES +=	\
 HEADERS +=	\
         $${SRC_PROJECT_PATH}/pciedev_ufn2.h				\
 	$${SRC_PROJECT_PATH}/tamc200_io.h
+
+
+OTHER_FILES +=	\
+        $${repositoryRoot}/.gitattributes		\
+	$${repositoryRoot}/.gitignore			\
+	$${repositoryRoot}/LICENSE			\
+	$${repositoryRoot}/README.md			\
+	$${repositoryRoot}/src/Makefile
