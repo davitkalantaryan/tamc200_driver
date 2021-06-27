@@ -8,4 +8,7 @@
         kfree(pciedev_cdev_m->pciedev_dev_m[k]);
         pciedev_cdev_m->pciedev_dev_m[k] = 0;
     }
+ 3. Calling 'register_upciedev_proc' function instide the function 'pciedev_probe_exp' is not correct. 
+    The function 'register_upciedev_proc' modifies 3rd arguments 'pciedev_procdir' field for each device.  
+    But this field is unique for entire driver.  
 

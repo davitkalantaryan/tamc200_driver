@@ -24,6 +24,7 @@
 #include <linux/fs.h>
 #include <linux/mm.h>
 #include <linux/pci.h>
+#include <linux/spinlock.h>
 #include <pciedev_ufn.h>
 #include "pciedev_ufn2.h"
 #include <debug_functions.h>
@@ -44,17 +45,21 @@ MODULE_LICENSE("Dual BSD/GPL");
 #define TAMC200_SUBVENDOR_ID 0x1498	/* TEWS vendor ID */
 #define TAMC200_SUBDEVICE_ID 0x80C8	/* IP carrier board device ID */
 
+struct SIntrReport{
+    int                 numberOfIRQs;
+    wait_queue_head_t	waitIRQ;
+};
 
 struct STamc200{
-    pciedev_dev         dev;
-    void*				sharedAddress;
-    int					deviceIrqAddress;
-    int                 numberOfIRQs;
+    pciedev_dev*        dev_p;
+    void*				sharedAddresses[TAMC200_NR_CARRIERS];
+    //int					deviceIrqAddresses[TAMC200_NR_CARRIERS];  // a_pTamc200->deviceIrqAddresses = a_IpModule * 0x100;
     enum EIpCarrierType carrierType[TAMC200_NR_CARRIERS];
-    u32                 event_num;
-    u32                 isIrqActive : 1;
-    u32                 u32remainingBits : 31;
-    wait_queue_head_t	waitIRQ;
+    struct SIntrReport  intrData[TAMC200_NR_CARRIERS];
+    spinlock_t          intrLocks[TAMC200_NR_CARRIERS];
+    u32                 isIrqActive[TAMC200_NR_CARRIERS];
+    u32                 numberIrqActive : 4;  // keeps count of carrier modules, requested for interrupt
+    u32                 u32remainingBits : 28;
 };
 
 static long           tamc200_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
@@ -106,35 +111,37 @@ static const struct vm_operations_struct s_tamc200_mmap_vm_ops =
 
 static int tamc200_mmap(struct file *a_filp, struct vm_area_struct *a_vma)
 {
-    struct pciedev_dev*		dev = a_filp->private_data;
-    struct STamc200*		pTamc200 = dev->parent;
-    unsigned long sizeFrUser = a_vma->vm_end - a_vma->vm_start;
+    int tmp_bar_num = a_vma->vm_pgoff;
+    if(tmp_bar_num>=NUMBER_OF_BARS){
+        int nCarrier = tmp_bar_num-NUMBER_OF_BARS;
+        if(nCarrier<TAMC200_NR_CARRIERS){
+            struct pciedev_dev*		dev = a_filp->private_data;
+            struct STamc200*		pTamc200 = dev->parent;
+            unsigned long sizeFrUser = a_vma->vm_end - a_vma->vm_start;
+            unsigned long sizeOrig = IP_TIMER_WHOLE_BUFFER_SIZE_ALL;
+            unsigned int size = sizeFrUser>sizeOrig ? sizeOrig : sizeFrUser;
 
-    if(sizeFrUser == (unsigned long)SIZE_FOR_INTR_SHMEM){
-        unsigned long sizeOrig = IP_TIMER_WHOLE_BUFFER_SIZE_ALL;
-        unsigned int size = sizeFrUser>sizeOrig ? sizeOrig : sizeFrUser;
+            if (!pTamc200->sharedAddresses[nCarrier]){
+                ERRCT("device is not registered for interrupts\n");
+                return -ENODEV;
+            }
 
-        ALERTCT("\n");
+            if (remap_pfn_range(a_vma, a_vma->vm_start, virt_to_phys((void *)pTamc200->sharedAddresses[nCarrier])>>PAGE_SHIFT,size,a_vma->vm_page_prot)<0){
+                ERRCT("remap_pfn_range failed\n");
+                return -EIO;
+            }
 
-        if (!pTamc200->sharedAddress){
-            ERRCT("device is not registered for interrupts\n");
-            return -ENODEV;
+            a_vma->vm_private_data = pTamc200;
+            a_vma->vm_ops = &s_tamc200_mmap_vm_ops;
+            tamc200_vma_open(a_vma);
+
+            return 0;
         }
-
-        if (remap_pfn_range(a_vma, a_vma->vm_start, virt_to_phys((void *)pTamc200->sharedAddress) >> PAGE_SHIFT, size, a_vma->vm_page_prot) < 0){
-            ERRCT("remap_pfn_range failed\n");
-            return -EIO;
-        }
-
-        a_vma->vm_private_data = pTamc200;
-        a_vma->vm_ops = &s_tamc200_mmap_vm_ops;
-        tamc200_vma_open(a_vma);
-
-        return 0;
     }
 
     return pciedev_remap_mmap_exp(a_filp,a_vma);
 }
+
 
 
 /*
@@ -142,119 +149,149 @@ static int tamc200_mmap(struct file *a_filp, struct vm_area_struct *a_vma)
  */
 static irqreturn_t tamc200_interrupt(INTR_ARGS(int a_irq, void *a_dev_id, struct pt_regs* a_regs))
 {
+    // see documentation "tamc200_user_manual.pdf", page 23
+    static const u16 sintrMasks[TAMC200_NR_CARRIERS]={0x03,0x0c,0x30};
     struct STamc200 * pTamc200 = a_dev_id;
-    int* pnBufferIndex = (int*)pTamc200->sharedAddress;
+    int* pnBufferIndex;
     int nNextBufferIndex ;
-    char* deviceBar2Address = (char*)pTamc200->dev.memmory_base[2];
-    char* ip_base_addres = (char*)pTamc200->dev.memmory_base[3] + pTamc200->deviceIrqAddress;
+    char* deviceBar2Address = (char*)pTamc200->dev_p->memmory_base[2];
+    char* deviceBar3Address = (char*)pTamc200->dev_p->memmory_base[3];
+    char* ip_base_addres;
     struct STimeTelegram* pTimeTelegram ;
     struct timeval	aTv;
+    int anyCarrierInterrupted = 0;
+    int cr;
+    u16 ipStatusReg;
     u16 uEvLow;
     u16 uEvHigh;
+    u32 event_num;
 
     (void)a_irq;
     UNWARN_INTR_LAST_ARG(a_regs)
 
     do_gettimeofday(&aTv);
 
-    uEvLow = ioread16(deviceBar2Address + 0xC);
+    // see documentation "tamc200_user_manual.pdf", page 23
+    ipStatusReg = ioread16(deviceBar2Address + 0xC);
     smp_rmb();
-    if (uEvLow == 0){ return IRQ_NONE; }
 
-    // after this, we should check which carrier module
-    // interrupted, and make following steps, if the type is
-    // delay gate generator
+    for(cr=0;cr<TAMC200_NR_CARRIERS;++cr){
+        spin_lock(&(pTamc200->intrLocks[cr]));
+        if((ipStatusReg&sintrMasks[cr])&&pTamc200->isIrqActive[cr]){
+            anyCarrierInterrupted = 1;
+            ip_base_addres = deviceBar3Address + cr*0x100; // a_IpModule * 0x100
+            pnBufferIndex = (int*)pTamc200->sharedAddresses[cr];
 
-    uEvLow = ioread16(ip_base_addres + 0x40);//?
-    smp_rmb();
-    if (pTamc200->dev.swap){ uEvLow=UPCIEDEV_SWAPS(uEvLow); }
+            switch(pTamc200->carrierType[cr]){
+            case IpCarrierDelayGate:
+                uEvLow = ioread16(ip_base_addres + 0x40);
+                smp_rmb();
+                if (pTamc200->dev_p->swap){ uEvLow=UPCIEDEV_SWAPS(uEvLow); }
 
-    uEvHigh = ioread16(ip_base_addres + 0x42);//?
-    smp_rmb();
-    if (pTamc200->dev.swap){ uEvHigh=UPCIEDEV_SWAPS(uEvHigh); }
+                uEvHigh = ioread16(ip_base_addres + 0x42);
+                smp_rmb();
+                if (pTamc200->dev_p->swap){ uEvHigh=UPCIEDEV_SWAPS(uEvHigh); }
 
-    pTamc200->event_num = (long)uEvHigh;
-    pTamc200->event_num <<= 16;
-    pTamc200->event_num |= (long)uEvLow;
+                event_num = (long)uEvHigh;
+                event_num <<= 16;
+                event_num |= (long)uEvLow;
 
-    nNextBufferIndex = pTamc200->event_num % IP_TIMER_RING_BUFFERS_COUNT;
-    pTimeTelegram = (struct STimeTelegram*)((char*)pTamc200->sharedAddress + _OFFSET_TO_SPECIFIC_BUFFER_(nNextBufferIndex));
+                nNextBufferIndex = event_num % IP_TIMER_RING_BUFFERS_COUNT;
+                pTimeTelegram = (struct STimeTelegram*)((char*)pTamc200->sharedAddresses[cr] + _OFFSET_TO_SPECIFIC_BUFFER_(nNextBufferIndex));
 
-    pTimeTelegram->gen_event = (int)pTamc200->event_num;
-    pTimeTelegram->seconds = aTv.tv_sec;
-    pTimeTelegram->useconds = aTv.tv_usec;
+                pTimeTelegram->gen_event = (int)event_num;
+                pTimeTelegram->seconds = aTv.tv_sec;
+                pTimeTelegram->useconds = aTv.tv_usec;
 
-    *pnBufferIndex = nNextBufferIndex;
-    ++pTamc200->numberOfIRQs;
-    wake_up(&pTamc200->waitIRQ);
+                iowrite16(0xFFFF, ip_base_addres + 0x3A);
+                smp_wmb();
+                break;
+            default:
+                nNextBufferIndex = 0;
+                break;
+            }
 
-    iowrite16(0xFFFF, deviceBar2Address + 0xC); //?
-    smp_wmb();
+            *pnBufferIndex = nNextBufferIndex;
+            ++pTamc200->intrData[cr].numberOfIRQs;
+            wake_up(&pTamc200->intrData[cr].waitIRQ);
 
-    iowrite16(0xFFFF, ip_base_addres + 0x3A); //?
-    smp_wmb();
+            iowrite16(0xFFFF, deviceBar2Address + 0xC); // reset interrupt (see documentation "tamc200_user_manual.pdf", page 24 )
+            smp_wmb();
+        }  // if(ipStatusReg&sintrMasks[cr]){
+        spin_unlock(&(pTamc200->intrLocks[cr]));
+    }  // for(cr=0;cr<TAMC200_NR_CARRIERS;++cr){
 
-    return IRQ_HANDLED;
+    return anyCarrierInterrupted?IRQ_HANDLED:IRQ_NONE;
 }
 
 
-static void DisableAllInterrupts(struct STamc200* a_pTamc200)
+static void DisableInterrupt(struct STamc200* a_pTamc200, int a_ipModule)
 {
+    const int ipModule = a_ipModule % TAMC200_NR_CARRIERS;
     ALERTCT("\n");
 
-    if (a_pTamc200->isIrqActive){
-        free_irq(a_pTamc200->dev.pci_dev_irq, a_pTamc200);
-        _DEALLOC_MEMORY_(a_pTamc200->sharedAddress);
-        a_pTamc200->isIrqActive = 0;
+    spin_lock(&(a_pTamc200->intrLocks[ipModule]));
+    if (a_pTamc200->isIrqActive[ipModule]){
+        a_pTamc200->isIrqActive[ipModule] = 0;
+        spin_unlock(&(a_pTamc200->intrLocks[ipModule]));
+        _DEALLOC_MEMORY_(a_pTamc200->sharedAddresses[ipModule]);
+        a_pTamc200->sharedAddresses[ipModule] = NULL;
     }
-    a_pTamc200->dev.irq_type = 0;
+    else{
+        spin_unlock(&(a_pTamc200->intrLocks[ipModule]));
+    }
+
+    if((--(a_pTamc200->numberIrqActive))==0){
+        free_irq(a_pTamc200->dev_p->pci_dev_irq, a_pTamc200);
+        a_pTamc200->dev_p->irq_type = 0;
+    }
 }
 
 
 
-static int EnableInterrupt(struct STamc200* a_pTamc200, int a_IpModule)
+static int EnableInterrupt(struct STamc200* a_pTamc200, int a_ipModule)
 {
-    char*	deviceBar2Address = (char*)(a_pTamc200->dev.memmory_base[2]);
-    char*	deviceBar3Address = (char*)(a_pTamc200->dev.memmory_base[3]);
-    char*	ip_base_addres = deviceBar3Address + 0x100 * a_IpModule;
-    int nReturn = 0;
-    u16 tmp_slot_cntrl = 0;
-
+    const int ipModule = a_ipModule % TAMC200_NR_CARRIERS;
     ALERTCT("\n");
 
-    a_IpModule = a_IpModule > 2 ? 2 : (a_IpModule < 0 ? 0 : a_IpModule);
+    if(!a_pTamc200->isIrqActive[ipModule]){
+        char*	deviceBar2Address = (char*)(a_pTamc200->dev_p->memmory_base[2]);
+        char*	deviceBar3Address = (char*)(a_pTamc200->dev_p->memmory_base[3]);
+        char*	ip_base_addres = deviceBar3Address + 0x100 * ipModule;
+        int nReturn = 0;
+        u16 tmp_slot_cntrl = 0;
 
-    if (!a_pTamc200->isIrqActive){
-        ALERTCT(KERN_ALERT "IRQ FOR IP MODULE %i ENABLED\n", a_IpModule);
         tmp_slot_cntrl |= (1 & 0x3) << 6;
         tmp_slot_cntrl |= 0x0020;
 
-        a_pTamc200->sharedAddress = _ALLOC_MEMORY_(GFP_KERNEL);
-        if (!a_pTamc200->sharedAddress){
+        a_pTamc200->sharedAddresses[ipModule] = _ALLOC_MEMORY_(GFP_KERNEL);
+        if (!a_pTamc200->sharedAddresses[ipModule]){
             ERRCT("No memory!\n");
-            return -1;
+            return -ENOMEM;
         }
 
-        *((int*)a_pTamc200->sharedAddress) = IP_TIMER_RING_BUFFERS_COUNT-1;
-        a_pTamc200->deviceIrqAddress = a_IpModule * 0x100;
-        init_waitqueue_head(&a_pTamc200->waitIRQ);
-        nReturn = request_irq(a_pTamc200->dev.pci_dev_irq, &tamc200_interrupt, IRQF_SHARED , TAMC200_DRV_NAME, a_pTamc200);
-        if (nReturn){
-            ERRCT("Unable to activate interrupt for pin %d\n", a_pTamc200->dev.pci_dev_irq);
-            return nReturn;
+        *((int*)a_pTamc200->sharedAddresses[ipModule]) = IP_TIMER_RING_BUFFERS_COUNT-1;
+        init_waitqueue_head(&a_pTamc200->intrData[ipModule].waitIRQ);
+        if((a_pTamc200->numberIrqActive++)==0){
+            nReturn = request_irq(a_pTamc200->dev_p->pci_dev_irq, &tamc200_interrupt, IRQF_SHARED , TAMC200_DRV_NAME, a_pTamc200);
+            if (nReturn){
+                a_pTamc200->numberIrqActive = 2;
+                DisableInterrupt(a_pTamc200,ipModule);
+                a_pTamc200->numberIrqActive = 0;
+                ERRCT("Unable to activate interrupt for pin %d\n", a_pTamc200->dev_p->pci_dev_irq);
+                return nReturn;
+            }
+            a_pTamc200->dev_p->irq_type = 2;
         }
 
-        a_pTamc200->isIrqActive = 1;
-        a_pTamc200->numberOfIRQs = 0;
-        ALERTCT("\n");
-        a_pTamc200->dev.irq_type = 2;
+        a_pTamc200->intrData[ipModule].numberOfIRQs =0;
+        a_pTamc200->isIrqActive[ipModule] = 1;
+
+        iowrite16(tmp_slot_cntrl, deviceBar2Address + 0x2 * (ipModule + 1));
+        smp_wmb();
+        iowrite16(s_ips_irq_vec[ipModule], (ip_base_addres + 0x2E));
+        smp_wmb();
     }
-
-    //printk(KERN_ALERT "TAMC200_PROBE:  SLOT %i CNTRL %X\n", k, tmp_slot_cntrl);
-    iowrite16(tmp_slot_cntrl, deviceBar2Address + 0x2 * (a_IpModule + 1));
-    smp_wmb();
-    iowrite16(s_ips_irq_vec[a_IpModule], (ip_base_addres + 0x2E));
-    smp_wmb();
 
     return 0;
 }
@@ -264,11 +301,13 @@ static void __devexit tamc200_remove(struct pci_dev* a_dev)
 {
     pciedev_dev* pciedevdev = dev_get_drvdata(&(a_dev->dev));
     if(pciedevdev && pciedevdev->dev_sts){
-        struct STamc200*		pTamc200 = container_of(pciedevdev, struct STamc200, dev);
-        char* deviceBar2Address = (char*)pTamc200->dev.memmory_base[2];
-        char* deviceBar3Address = (char*)pTamc200->dev.memmory_base[3];
+        //struct STamc200*		pTamc200 = container_of(pciedevdev, struct STamc200, dev);
+        //parent
+        struct STamc200*		pTamc200 = pciedevdev->parent;
+        char* deviceBar2Address = (char*)pciedevdev->memmory_base[2];
+        char* deviceBar3Address = (char*)pciedevdev->memmory_base[3];
         char* ip_base_addres;
-        int   k;
+        int   cr;
         int   tmp_slot_num;
 
         ALERTCT( "SLOT %d BOARD %d\n", pciedevdev->slot_num, pciedevdev->brd_num);
@@ -279,12 +318,11 @@ static void __devexit tamc200_remove(struct pci_dev* a_dev)
         iowrite16(0x0000, deviceBar2Address + 0x6);
         smp_wmb();
 
-        DisableAllInterrupts(pTamc200);
-
-        for(k = 0; k < TAMC200_NR_CARRIERS; ++k){
-            switch(pTamc200->carrierType[k]){
+        for(cr = 0; cr < TAMC200_NR_CARRIERS; ++cr){
+            DisableInterrupt(pTamc200,cr);
+            switch(pTamc200->carrierType[cr]){
             case IpCarrierDelayGate:{
-                ip_base_addres = (char*)deviceBar3Address + 0x100*k;
+                ip_base_addres = (char*)deviceBar3Address + cr*0x100;
                 iowrite16(0x0000, (ip_base_addres + 0x2A));
                 smp_wmb();
                 iowrite16(0xFFFF, (ip_base_addres + 0x2A));
@@ -315,45 +353,43 @@ static void __devexit tamc200_remove(struct pci_dev* a_dev)
 
 static int __devinit tamc200_probe(struct pci_dev* a_dev, const struct pci_device_id* a_id)
 {
-    int tmp_brd_num;
-    //int result = pciedev_probe_exp(a_dev,a_id,&s_tamc200FileOps,&s_tamc200_cdev,TAMC200_DEVNAME,&tmp_brd_num);
-    int result = pciedev_probe_exp(a_dev,a_id,NULL,&s_tamc200_cdev,TAMC200_DEVNAME,&tmp_brd_num);
-
     char*	deviceBar2Address;
     char*	deviceBar3Address;
     char*  ip_base_addres;
-    int nReturn;
-    int k;
-    int brdNum = a_dev->brd_num % TAMC200_NR_DEVS;
+    int tmp_brd_num;
+    int result;
+    int cr;
     u32 tmp_module_id;
     u16 tmp_data_16;
-
-    ALERTCT("\n");
-
-
-    if (unlikely(s_vTamc200_dev[brdNum].dev)) return -1; // Already in use
-    s_vTamc200_dev[brdNum].dev = a_dev;
-
-    nReturn = Mtcagen_GainAccess_exp(a_dev, 0, NULL, &s_tamc200FileOps, DRV_NAME, "%ss%d", DEVNAME, a_dev->brd_num);
-    if (nReturn)
-    {
-        ERRCT("nReturn = %d\n", nReturn);
-        s_vTamc200_dev[brdNum].dev = NULL;
-        return nReturn;
+    pciedev_dev* dev_p = kzalloc(sizeof(pciedev_dev),GFP_KERNEL);
+    if(!dev_p){
+        return -ENOMEM;
     }
-    a_dev->parent = &s_vTamc200_dev[brdNum];
+    (void)a_id;
+    result = pciedev_probe_of_single_device_exp(a_dev,dev_p,TAMC200_DEVNAME,&s_tamc200_cdev,&s_tamc200FileOps);
+    if(result){
+        kfree(dev_p);
+        ERRCT("pciedev_probe_of_single_device_exp failed\n");
+        return result;
+    }
+    tmp_brd_num = dev_p->brd_num;
+    if(s_vTamc200_dev[tmp_brd_num].dev_p){
+        kfree(dev_p);
+        ERRCT("board number %d is already in use\n",tmp_brd_num);
+        return -EBUSY;
+    }
 
-    deviceBar2Address = (char*)s_vTamc200_dev[brdNum].dev->memmory_base[2];
-    deviceBar3Address = (char*)s_vTamc200_dev[brdNum].dev->memmory_base[3];
+    s_vTamc200_dev[tmp_brd_num].dev_p = dev_p;
+    deviceBar2Address = (char*)dev_p->memmory_base[2];
+    deviceBar3Address = (char*)dev_p->memmory_base[3];
 
-
-    for (k = 0; k < TAMC200_NR_SLOTS; k++)
+    for (cr = 0; cr < TAMC200_NR_CARRIERS; ++cr)
     {
         //if(tamc200_dev[tmp_slot_num].ip_s[k].ip_on)
         {
-            ALERTCT("TAMC200_PROBE:  SLOT %i ENABLED\n", k);
+            ALERTCT("TAMC200_PROBE:  CARRIER %i ENABLED\n", cr);
 
-            ip_base_addres = deviceBar3Address + 0x100 * k;
+            ip_base_addres = deviceBar3Address + 0x100 * cr;
 
             tmp_data_16 = ioread16(ip_base_addres + 0x80);
             smp_rmb();
@@ -373,33 +409,18 @@ static int __devinit tamc200_probe(struct pci_dev* a_dev, const struct pci_devic
 
             ALERTCT("TAMC200_PROBE: MODULE ID %X\n", tmp_module_id);
         }
-    } // for(k = 0; k < TAMC200_NR_SLOTS; k++)
+    } // for (cr = 0; cr < TAMC200_NR_CARRIERS; ++cr)
 
     return 0;
 }
-
-
-
-static void tamc200_vma_open(struct vm_area_struct *a_vma){}
-static void tamc200_vma_close(struct vm_area_struct *a_vma){}
-
-
-static struct vm_operations_struct tamc200_mmap_vm_ops =
-{
-    .open = tamc200_vma_open,
-    .close = tamc200_vma_close,
-    //.fault = daq_vma_fault,	// Finally page fault exception should be used to do
-    // page size changing really dynamoc
-};
 
 
 static long  tamc200_ioctl(struct file *a_filp, unsigned int a_cmd, unsigned long a_arg)
 {
     struct pciedev_dev*		dev = a_filp->private_data;
     struct STamc200*		pTamc200 = dev->parent;
-    struct SIrqWaiterStruct*	psIRQ = &pTamc200->irqWaiterStruct;
     long nReturn = 0;
-    long lnNextNumberOfIRQDone = pTamc200->irqWaiterStruct.numberOfIRQs + 1;
+    long lnNextNumberOfIRQDone = pTamc200->numberOfIRQs + 1;
     u64						ulnJiffiesTmOut;
     int32_t nUserValue;
 
@@ -417,27 +438,14 @@ static long  tamc200_ioctl(struct file *a_filp, unsigned int a_cmd, unsigned lon
 
     switch (a_cmd)
     {
-    case IP_TIMER_TEST1:
-        DEBUGNEW("IP_TIMER_TEST1\n");
-        return s_nOtherDeviceInterrupt;
-        break;
-
-    case GEN_REQUEST_IRQ1_FOR_DEV: case GEN_UNREQUEST_IRQ_FOR_DEV: break; // These are not allowed to do
-
-    case IP_TIMER_TEST_TIMING:
-#ifdef DEBUG_TIMING
-        copy_to_user((struct STimingTest*)a_arg, &s_TimingTest, sizeof(struct STimingTest));
-#endif
-        break;
-
-    case IP_TIMER_ACTIVATE_INTERRUPT: case GEN_REQUEST_IRQ2_FOR_DEV:
+    case IP_TIMER_ACTIVATE_INTERRUPT: /*case GEN_REQUEST_IRQ2_FOR_DEV:*/
         DEBUGNEW("IP_TIMER_ACTIVATE_INTERRUPT\n");
-        if (psIRQ->isIrqActive) return 0;
-        if (copy_from_user(&nUserValue, (int32_t*)a_arg, sizeof(int32_t)))
-        {
+        if (copy_from_user(&nUserValue, (int32_t*)a_arg, sizeof(int32_t))){
             nReturn = -EFAULT;
             goto returnPoint;
         }
+        nUserValue %= TAMC200_NR_CARRIERS;
+        if (pTamc200->isIrqActive[nUserValue]) return 0;
         nReturn = EnableInterrupt(pTamc200, nUserValue);
         break;
 
@@ -470,18 +478,33 @@ returnPoint:
 }
 
 
-void __exit tamc200_cleanup_module(void)
+static void __exit tamc200_cleanup_module(void)
 {
     ALERTCT("\n");
-    removeIDfromMainDriverByParam(&s_DevParam);
+    upciedev_driver_clean_exp(&s_tamc200_cdev);
 }
+
 
 static int __init tamc200_init_module(void)
 {
+    int i, cr;
     int result;
+
     ALERTCT("\n");
-    memset(s_vTamc200_dev, 0, sizeof(s_vTamc200_dev));
     result = upciedev_driver_init_exp(&s_tamc200_cdev,&s_tamc200FileOps,TAMC200_DEVNAME);
+
+    if(!result){
+        ERRCT("Unable to init driver\n");
+        return result;
+    }
+
+    memset(s_vTamc200_dev, 0, sizeof(s_vTamc200_dev));
+    for(i=0;i<TAMC200_NR_DEVS;++i){
+        for(cr=0;cr<TAMC200_NR_CARRIERS;++cr){
+            spin_lock_init(&(s_vTamc200_dev[i].intrLocks[cr]));
+        }
+    }
+
     pci_register_driver(&s_tamc200_driver);
 
     printk(KERN_ALERT "!!!!!!!!!!!!!!! __USER_CS=%d(0x%x), __USER_DS=%d(0x%x), __KERNEL_CS=%d(%d), __KERNEL_DS=%d(0x%x)\n",

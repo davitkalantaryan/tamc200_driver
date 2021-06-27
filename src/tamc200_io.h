@@ -14,8 +14,6 @@
 #include <pciedev_io.h>
 
 
-#define SIZE_FOR_INTR_SHMEM     ((size_t)-8)
-
 enum EIpCarrierType{IpCarrierNone,IpCarrierDelayGate};
 
 typedef struct STimeTelegram
@@ -41,13 +39,10 @@ typedef struct STimeTelegram
 
 #define	TAMC200_IOC										't'
 
-#define	IP_TIMER_ACTIVATE_INTERRUPT_PRVT				52 // Piti poxvi
-
 /*////////////////////////////////////////////////////////////////////////*/
-#define IP_TIMER_TEST1									_IOWR(TAMC200_IOC,51, int)
-#define IP_TIMER_TEST_TIMING							_IOR(TAMC200_IOC,53, struct STimingTest)
-#define IP_TIMER_ACTIVATE_INTERRUPT						_IOWR(TAMC200_IOC,IP_TIMER_ACTIVATE_INTERRUPT_PRVT, int)
-#define IP_TIMER_WAIT_FOR_EVENT_INF						MTCA_WAIT_FOR_IRQ2_INF
-#define IP_TIMER_WAIT_FOR_EVENT_TIMEOUT					MTCA_WAIT_FOR_IRQ2_TIMEOUT
+//#define IP_TIMER_ACTIVATE_INTERRUPT						_IOWR(TAMC200_IOC,32, int)
+#define IP_TIMER_ACTIVATE_INTERRUPT						_IOW(TAMC200_IOC,32, int)
+#define IP_TIMER_WAIT_FOR_EVENT_INF                     _IO(TAMC200_IOC,33)
+#define IP_TIMER_WAIT_FOR_EVENT_TIMEOUT                 _IOW(TAMC200_IOC,34, int)
 
 #endif  // #ifndef TAMC200_IO_H
