@@ -50,3 +50,14 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+/ko_files
+
+/workspaces/*/*
+#
+!/workspaces/*_qt/*.pri
+!/workspaces/*_qt/*.pro
+#
+!/workspaces/*_vs/*.sln
+!/workspaces/*_vs/*.vcxproj
+!/workspaces/*_vs/*.vcxproj.filters
