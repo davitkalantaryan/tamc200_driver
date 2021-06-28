@@ -1,8 +1,30 @@
+/**
+ *Copyright 2015-  DESY (Deutsches Elektronen-Synchrotron, www.desy.de)
+ *
+ *This file is part of TAMC200 driver.
+ *
+ *TAMC200 is free software: you can redistribute it and/or modify
+ *it under the terms of the GNU General Public License as published by
+ *the Free Software Foundation, either version 3 of the License, or
+ *(at your option) any later version.
+ *
+ *TAMC200 is distributed in the hope that it will be useful,
+ *but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *GNU General Public License for more details.
+ *
+ *You should have received a copy of the GNU General Public License
+ *along with TAMC200.  If not, see <http://www.gnu.org/licenses/>.
+ **/
+
 /*
  *	File: timer_drv_main.c
  *
  *	Created on: Oct 15, 2013, Modified 2015 Oct. 5
- *	Author: Davit Kalantaryan (Email: davit.kalantaryan@desy.de)
+ *  Created by: Davit Kalantaryan
+ *	Authors (maintainers):
+ *      Davit Kalantaryan (davit.kalantaryan@desy.de)
+ *      Ludwig Petrosyan  (ludwig.petrosyan@desy.de)
  *
  *
  */
@@ -35,7 +57,7 @@
 #include "../../include/used_for_driver_intelisense.h"
 #endif
 
-MODULE_AUTHOR("Davit Kalantaryan");
+MODULE_AUTHOR("Davit Kalantaryan, Ludwig Petrosyan");
 MODULE_DESCRIPTION("Driver for TEWS TAMC200 IP carrier");
 MODULE_VERSION("1.1.0");
 MODULE_LICENSE("Dual BSD/GPL");
@@ -420,14 +442,13 @@ static long  tamc200_ioctl(struct file *a_filp, unsigned int a_cmd, unsigned lon
     struct pciedev_dev*		dev = a_filp->private_data;
     struct STamc200*		pTamc200 = dev->parent;
     long nReturn = 0;
-    long lnNextNumberOfIRQDone = pTamc200->numberOfIRQs + 1;
-    u64						ulnJiffiesTmOut;
-    int32_t nUserValue;
+    long    lnNextNumberOfIRQDone;
+    u64		ulnJiffiesTmOut;
+    int32_t nCarrierModule;
 
     DEBUGNEW("\n");
 
-    if (unlikely(!dev->dev_sts))
-    {
+    if (unlikely(!dev->dev_sts)){
         WARNCT("device has been taken out!\n");
         return -ENODEV;
     }
@@ -440,36 +461,45 @@ static long  tamc200_ioctl(struct file *a_filp, unsigned int a_cmd, unsigned lon
     {
     case IP_TIMER_ACTIVATE_INTERRUPT: /*case GEN_REQUEST_IRQ2_FOR_DEV:*/
         DEBUGNEW("IP_TIMER_ACTIVATE_INTERRUPT\n");
-        if (copy_from_user(&nUserValue, (int32_t*)a_arg, sizeof(int32_t))){
+        if (copy_from_user(&nCarrierModule, (int32_t*)a_arg, sizeof(int32_t))){
             nReturn = -EFAULT;
             goto returnPoint;
         }
-        nUserValue %= TAMC200_NR_CARRIERS;
-        if (pTamc200->isIrqActive[nUserValue]) return 0;
-        nReturn = EnableInterrupt(pTamc200, nUserValue);
+        nCarrierModule %= TAMC200_NR_CARRIERS;
+        if (pTamc200->isIrqActive[nCarrierModule]) return 0;
+        nReturn = EnableInterrupt(pTamc200, nCarrierModule);
         break;
 
     case IP_TIMER_WAIT_FOR_EVENT_INF:
         DEBUGNEW("IP_TIMER_WAIT_FOR_EVENT_INF\n");
-        if (unlikely(!psIRQ->isIrqActive)) return -1;
-        nReturn = wait_event_interruptible(psIRQ->waitIRQ, lnNextNumberOfIRQDone <= psIRQ->numberOfIRQs);
-        break;
-
-    case IP_TIMER_WAIT_FOR_EVENT_TIMEOUT:
-        DEBUGNEW("IP_TIMER_WAIT_FOR_EVENT_TIMEOUT\n");
-        if (unlikely(!psIRQ->isIrqActive)) return -1;
-        if (copy_from_user(&nUserValue, (int32_t*)a_arg, sizeof(int32_t)))
-        {
+        if (copy_from_user(&nCarrierModule, (int32_t*)a_arg, sizeof(int32_t))){
             nReturn = -EFAULT;
             goto returnPoint;
         }
-        ulnJiffiesTmOut = msecs_to_jiffies(nUserValue);
-        nReturn = wait_event_interruptible_timeout(psIRQ->waitIRQ, lnNextNumberOfIRQDone <= psIRQ->numberOfIRQs, ulnJiffiesTmOut);
+        nCarrierModule %= TAMC200_NR_CARRIERS;
+        if (unlikely(!pTamc200->isIrqActive[nCarrierModule])) return -1;
+        lnNextNumberOfIRQDone = pTamc200->intrData[nCarrierModule].numberOfIRQs;
+        nReturn = wait_event_interruptible(pTamc200->intrData[nCarrierModule].waitIRQ, lnNextNumberOfIRQDone <= pTamc200->intrData[nCarrierModule].numberOfIRQs);
         break;
+
+    case IP_TIMER_WAIT_FOR_EVENT_TIMEOUT:{
+        SWaitInterruptTimeout aWaiterStr;
+        DEBUGNEW("IP_TIMER_WAIT_FOR_EVENT_TIMEOUT\n");
+        if (copy_from_user(&aWaiterStr, (SWaitInterruptTimeout*)a_arg, sizeof(SWaitInterruptTimeout))){
+            nReturn = -EFAULT;
+            goto returnPoint;
+        }
+        nCarrierModule = aWaiterStr.carrierNumber % TAMC200_NR_CARRIERS;
+        if (unlikely(!pTamc200->isIrqActive[nCarrierModule])) return -1;
+        lnNextNumberOfIRQDone = pTamc200->intrData[nCarrierModule].numberOfIRQs;
+        ulnJiffiesTmOut = msecs_to_jiffies(aWaiterStr.miliseconds);
+        nReturn = wait_event_interruptible_timeout(pTamc200->intrData[nCarrierModule].waitIRQ,
+                                                   lnNextNumberOfIRQDone <= pTamc200->intrData[nCarrierModule].numberOfIRQs, ulnJiffiesTmOut);
+    }break;
 
     default:
         DEBUGNEW("default\n");
-        return mtcagen_ioctl_exp(a_filp, a_cmd, a_arg);
+        return pciedev_ioctl_exp(a_filp, &a_cmd, &a_arg,&s_tamc200_cdev);
     }
 
 returnPoint:
