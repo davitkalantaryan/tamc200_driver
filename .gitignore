@@ -61,3 +61,5 @@ dkms.conf
 !/workspaces/*_vs/*.sln
 !/workspaces/*_vs/*.vcxproj
 !/workspaces/*_vs/*.vcxproj.filters
+
+/tests/mmap_test
