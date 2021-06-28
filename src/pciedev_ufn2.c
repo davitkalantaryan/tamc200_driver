@@ -10,6 +10,9 @@
 #include <debug_functions.h>
 
 
+static int GetSlotNumber(struct pci_dev *a_pPciDev); // This function should be improved;
+
+
 loff_t    pciedev_llseek_exp(struct file *filp, loff_t off, int frm)
 {
     ssize_t       retval         = 0;
@@ -81,7 +84,7 @@ int pciedev_cdev_init(pciedev_dev* a_pciedev_p, const pciedev_cdev* a_pciedev_cd
 }
 
 
-void pciedev_device_init_exp(pciedev_dev* a_pciedev_p)
+void pciedev_device_init(pciedev_dev* a_pciedev_p)
 {
     INIT_LIST_HEAD(&(a_pciedev_p->prj_info_list.prj_list));
     INIT_LIST_HEAD(&(a_pciedev_p->module_info_list.module_list));
@@ -101,7 +104,6 @@ void pciedev_device_init_exp(pciedev_dev* a_pciedev_p)
     //a_pciedev_p->parent_base_dev     = p_base_upciedev_dev;
     printk(KERN_ALERT "INIT ADD PARENT BASE\n");
 }
-EXPORT_SYMBOL(pciedev_device_init_exp);
 
 
 //void pciedev_device_clean_exp(pciedev_dev* a_pciedev_p)
@@ -211,14 +213,20 @@ int pciedev_probe_of_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pci
 
     char f_name[64];
     char prc_entr[64];
-
+	
+#if defined(CONFIG_PCI_MSI) && ( LINUX_VERSION_CODE >= KERNEL_VERSION(4,0,0) )
     int    tmp_msi_num = 0;
+#endif
 	
 
     if(a_pciedev->binded){
         printk(KERN_WARNING "Device in the slot %d already binded\n",(int)a_pciedev->slot_num);
         return -1;
     }
+	
+	if(!a_pciedev->parent_base_dev){
+		pciedev_device_init(a_pciedev);
+	}
 
     printk(KERN_ALERT "############PCIEDEV_PROBE THIS IS U_FUNCTION NAME %s\n", a_dev_name);
 
@@ -273,10 +281,10 @@ int pciedev_probe_of_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pci
         printk(KERN_ALERT "PCIEDEV_PROBE:NTB DEVICE PARENTSLOT NUM %d DEV NUM%d \n",tmp_slot_num,tmp_dev_num);
     }
 	
-	ALERTCT("!!!!!!!!!!!!!!!!!!!!!!!!!!! tmp_slot_num=%d\n",(int)tmp_slot_num);  // todo: delete this
-
     a_pciedev->swap         = 0;
+	tmp_slot_num = GetSlotNumber(a_dev);  // new method added
     a_pciedev->slot_num  = tmp_slot_num;
+	ALERTCT("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! a_pciedev->slot_num=%d\n",a_pciedev->slot_num);
     a_pciedev->bus_func  = tmp_bus_func;
     a_pciedev->pciedev_pci_dev = a_dev;
     if(a_pciedev->brd_num<0){
@@ -355,9 +363,6 @@ int pciedev_probe_of_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pci
     a_pciedev->scratch_offset = 0;
 
    /*****Set Up Base Tables*/
-	if(!a_pciedev->parent_base_dev){
-		a_pciedev->parent_base_dev = &base_upciedev_dev;
-	}
     a_pciedev->parent_base_dev->dev_phys_addresses[tmp_slot_num].dev_stst       = 1;
     a_pciedev->parent_base_dev->dev_phys_addresses[tmp_slot_num].slot_num      = tmp_slot_num;
     a_pciedev->parent_base_dev->dev_phys_addresses[tmp_slot_num].slot_bus        =busNumber;
@@ -487,9 +492,9 @@ int pciedev_remove_single_device_exp(struct pci_dev* a_dev, const pciedev_cdev* 
 
     pciedevdev = dev_get_drvdata(&(a_dev->dev));
     if(!pciedevdev) return 0;
-
+	
     cdev_del(&pciedevdev->cdev);
-
+	
     tmp_dev_num  = pciedevdev->dev_num;
     tmp_slot_num  = pciedevdev->slot_num;
     m_brdNum      = pciedevdev->brd_num;
@@ -579,3 +584,90 @@ int pciedev_remove_single_device_exp(struct pci_dev* a_dev, const pciedev_cdev* 
     return 0;
 }
 EXPORT_SYMBOL(pciedev_remove_single_device_exp);
+
+
+#define _METHOD_	1
+#define PRINT_BITS_FR_INT(...)
+#define PCIE_GEN_NR_DEVS	16
+
+
+static int GetSlotNumber(struct pci_dev *a_pPciDev) // This function should be improved
+{
+	int pcie_cap;
+	u32 tmp_slot_cap = 0;
+
+#if _METHOD_==1
+	if (a_pPciDev->bus)
+	{
+		if (a_pPciDev->bus->parent)
+		{
+			if (a_pPciDev->bus->parent->self)
+			{
+				pcie_cap = pci_find_capability(a_pPciDev->bus->parent->self, PCI_CAP_ID_EXP);
+				pci_read_config_dword(a_pPciDev->bus->parent->self, (pcie_cap + PCI_EXP_SLTCAP), &tmp_slot_cap);
+				//pci_read_config_dword(a_pPciDev->bus->parent->self, (pcie_cap + PCI_EXP_SLTCAP), &tmp_slot_cap);
+				PRINT_BITS_FR_INT(tmp_slot_cap, 0, 19);
+				return (tmp_slot_cap >> 19) % PCIE_GEN_NR_DEVS;
+			}
+
+		} // if (a_pPciDev->bus->parent)
+
+	} // if (a_pPciDev->bus)
+#elif _METHOD_==2
+	if (a_pPciDev->bus)
+	{
+		if (a_pPciDev->bus->self)
+		{
+			pcie_cap = pci_find_capability(a_pPciDev->bus->self, PCI_CAP_ID_EXP);
+			pci_read_config_dword(a_pPciDev->bus->self, (pcie_cap + PCI_EXP_SLTCAP), &tmp_slot_cap);
+			PRINT_BITS_FR_INT(tmp_slot_cap, 0, 19);
+			return (tmp_slot_cap >> 19) % PCIE_GEN_NR_DEVS;
+		}
+
+	} // if (a_pPciDev->bus)
+#elif _METHOD_==3
+	struct pci_bus* pCurBus = a_pPciDev ? a_pPciDev->bus : NULL;
+	struct pci_dev* pCurDev = pCurBus ? pCurBus->self : NULL;
+
+	while (pCurDev)
+	{
+		pcie_cap = pci_find_capability(pCurDev, PCI_CAP_ID_EXP);
+		pci_read_config_dword(pCurDev, (pcie_cap + PCI_EXP_SLTCAP), &tmp_slot_cap);
+
+		PRINT_BITS_FR_INT3_ALL("Trying:", tmp_slot_cap);
+
+		if (tmp_slot_cap & PCI_EXP_FLAGS_SLOT)
+		{
+			PRINT_BITS_FR_INT3_ALL("Found!:", tmp_slot_cap);
+			return (tmp_slot_cap >> 19) % PCIE_GEN_NR_DEVS;
+		}
+
+		pCurBus = pCurBus ? pCurBus->parent : NULL;
+		pCurDev = pCurBus ? pCurBus->self : NULL;
+	}
+#elif _METHOD_==4
+	struct pci_bus* pCurBus = a_pPciDev ? a_pPciDev->bus : NULL;
+	struct pci_dev* pCurDev = pCurBus ? pCurBus->self : NULL;
+
+	while (pCurDev)
+	{
+		pcie_cap = pci_find_capability(pCurDev, PCI_CAP_ID_EXP);
+		pci_read_config_dword(pCurDev, (pcie_cap + PCI_EXP_SLTCAP), &tmp_slot_cap);
+
+		PRINT_BITS_FR_INT3_ALL("Trying:", tmp_slot_cap);
+
+		if ((tmp_slot_cap & 1) && (tmp_slot_cap & 2))
+		{
+			PRINT_BITS_FR_INT3_ALL("Found!:", tmp_slot_cap);
+			return (tmp_slot_cap >> 19) % PCIE_GEN_NR_DEVS;
+		}
+
+		pCurBus = pCurBus ? pCurBus->parent : NULL;
+		pCurDev = pCurBus ? pCurBus->self : NULL;
+	}
+#else
+#error wrong method
+#endif
+
+	return -1;
+}

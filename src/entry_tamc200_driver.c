@@ -333,7 +333,6 @@ static void __devexit tamc200_remove(struct pci_dev* a_dev)
         int   cr;
         //int   tmp_slot_num;
 
-		ALERTCT("!!!!!!!!!!!!!!!!!!!!!!!!!!! pTamc200=%p\n",pTamc200); // todo: delete this
         ALERTCT( "SLOT %d BOARD %d\n", pciedevdev->slot_num, pciedevdev->brd_num);
 
         /*DISABLING INTERRUPTS ON THE MODULES*/
@@ -369,8 +368,8 @@ static void __devexit tamc200_remove(struct pci_dev* a_dev)
             }  // switch(pTamc200->carrierType[k]){
         } // for(k = 0; k < TAMC200_NR_SLOTS; ++k)
 
-        memset(pTamc200, 0, sizeof(struct STamc200));
         pciedev_remove_single_device_exp(a_dev,&s_tamc200_cdev, TAMC200_DEVNAME);
+		memset(pTamc200, 0, sizeof(struct STamc200));
     }
 }
 
@@ -390,13 +389,16 @@ static int __devinit tamc200_probe(struct pci_dev* a_dev, const struct pci_devic
         return -ENOMEM;
     }
     (void)a_id;
+	//pciedev_device_init_exp(dev_p);
+	dev_p->brd_num = -1;
     result = pciedev_probe_of_single_device_exp(a_dev,dev_p,TAMC200_DEVNAME,&s_tamc200_cdev,&s_tamc200FileOps);
     if(result){
         kfree(dev_p);
         ERRCT("pciedev_probe_of_single_device_exp failed\n");
         return result;
     }
-    tmp_brd_num = dev_p->brd_num;
+    tmp_brd_num = ((unsigned int)dev_p->brd_num % TAMC200_NR_DEVS);
+	ALERTCT("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! tmp_brd_num=%d\n",(int)tmp_brd_num);
     if(s_vTamc200_dev[tmp_brd_num].dev_p){
         kfree(dev_p);
         ERRCT("board number %d is already in use\n",tmp_brd_num);
@@ -522,6 +524,8 @@ static int __init tamc200_init_module(void)
 {
     int i, cr;
     int result;
+	
+	(void)base_upciedev_dev;
 
     ALERTCT("\n");
     result = upciedev_driver_init_exp(&s_tamc200_cdev,&s_tamc200FileOps,TAMC200_DEVNAME);
