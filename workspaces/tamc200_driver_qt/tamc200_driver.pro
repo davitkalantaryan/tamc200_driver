@@ -11,6 +11,9 @@ CONFIG -= qt
 DEFINES += __INTELISENSE__
 DEFINES += __KERNEL__
 
+DOCS_TXT	= $$system($${repositoryRoot}/scripts/findfiles $${repositoryRoot}/docs   .txt)
+DOCS_MD		= $$system($${repositoryRoot}/scripts/findfiles $${repositoryRoot}/docs   .md)
+
 ARCH=arm64
 repositoryRoot = $${PWD}/../..
 SRC_PROJECT_PATH = $${repositoryRoot}/src
@@ -32,12 +35,15 @@ INCLUDEPATH += $$system(find -L $$LINUX_HEADERS_PATH/arch/$$ARCH/include -type d
 
 
 SOURCES +=	\
-        $${SRC_PROJECT_PATH}/entry_tamc200_driver.c				\
+	$${SRC_PROJECT_PATH}/entry_tamc200_driver.c			\
 	$${SRC_PROJECT_PATH}/pciedev_ufn2.c
 
 HEADERS +=	\
         $${SRC_PROJECT_PATH}/pciedev_ufn2.h				\
 	$${SRC_PROJECT_PATH}/tamc200_io.h
+
+OTHER_FILES += $${DOCS_TXT}
+OTHER_FILES += $${DOCS_MD}
 
 
 OTHER_FILES +=	\
