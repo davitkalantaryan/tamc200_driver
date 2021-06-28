@@ -7,6 +7,10 @@
 #include "pciedev_ufn2.h"
 #include "pciedev_ufn.h"
 #include <linux/module.h>
+#include <debug_functions.h>
+
+
+static int GetSlotNumber(struct pci_dev *a_pPciDev); // This function should be improved;
 
 
 loff_t    pciedev_llseek_exp(struct file *filp, loff_t off, int frm)
@@ -43,6 +47,14 @@ void register_upciedev_proc2(int num, const char * dfn, struct pciedev_dev     *
 }
 
 
+void unregister_upciedev_proc2(int num, const char *dfn)
+{
+    char prc_entr[32];
+    snprintf(prc_entr, 32, "%ss%i", dfn, num);
+    remove_proc_entry(prc_entr,0);
+}
+
+
 int pciedev_cdev_init(pciedev_dev* a_pciedev_p, const pciedev_cdev* a_pciedev_cdev_p,
                           const struct file_operations* a_pciedev_fops,int a_brd_num)
 {
@@ -72,7 +84,7 @@ int pciedev_cdev_init(pciedev_dev* a_pciedev_p, const pciedev_cdev* a_pciedev_cd
 }
 
 
-void pciedev_device_init_exp(pciedev_dev* a_pciedev_p)
+void pciedev_device_init(pciedev_dev* a_pciedev_p)
 {
     INIT_LIST_HEAD(&(a_pciedev_p->prj_info_list.prj_list));
     INIT_LIST_HEAD(&(a_pciedev_p->module_info_list.module_list));
@@ -92,14 +104,13 @@ void pciedev_device_init_exp(pciedev_dev* a_pciedev_p)
     //a_pciedev_p->parent_base_dev     = p_base_upciedev_dev;
     printk(KERN_ALERT "INIT ADD PARENT BASE\n");
 }
-EXPORT_SYMBOL(pciedev_device_init_exp);
 
 
-void pciedev_device_clean_exp(pciedev_dev* a_pciedev_p)
-{
-    cdev_del(&a_pciedev_p->cdev);
-}
-EXPORT_SYMBOL(pciedev_device_clean_exp);
+//void pciedev_device_clean_exp(pciedev_dev* a_pciedev_p)
+//{
+//    cdev_del(&a_pciedev_p->cdev);
+//}
+//EXPORT_SYMBOL(pciedev_device_clean_exp);
 
 
 int upciedev_driver_init_exp(pciedev_cdev* a_pciedev_cdev_p, const struct file_operations* a_pciedev_fops, const char* a_dev_name)
@@ -202,13 +213,20 @@ int pciedev_probe_of_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pci
 
     char f_name[64];
     char prc_entr[64];
-
+	
+#if defined(CONFIG_PCI_MSI) && ( LINUX_VERSION_CODE >= KERNEL_VERSION(4,0,0) )
     int    tmp_msi_num = 0;
+#endif
+	
 
     if(a_pciedev->binded){
         printk(KERN_WARNING "Device in the slot %d already binded\n",(int)a_pciedev->slot_num);
         return -1;
     }
+	
+	if(!a_pciedev->parent_base_dev){
+		pciedev_device_init(a_pciedev);
+	}
 
     printk(KERN_ALERT "############PCIEDEV_PROBE THIS IS U_FUNCTION NAME %s\n", a_dev_name);
 
@@ -262,9 +280,11 @@ int pciedev_probe_of_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pci
         tmp_dev_num  = tmp_slot_num;
         printk(KERN_ALERT "PCIEDEV_PROBE:NTB DEVICE PARENTSLOT NUM %d DEV NUM%d \n",tmp_slot_num,tmp_dev_num);
     }
-
+	
     a_pciedev->swap         = 0;
+	tmp_slot_num = GetSlotNumber(a_dev);  // new method added
     a_pciedev->slot_num  = tmp_slot_num;
+	ALERTCT("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! a_pciedev->slot_num=%d\n",a_pciedev->slot_num);
     a_pciedev->bus_func  = tmp_bus_func;
     a_pciedev->pciedev_pci_dev = a_dev;
     if(a_pciedev->brd_num<0){
@@ -300,7 +320,7 @@ int pciedev_probe_of_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pci
                    break;
     }
     printk(KERN_ALERT "DAMC: DEVICE PAYLOAD  %d\n",tmp_payload_size);
-
+	
 
     if (!(cur_mask = pci_set_dma_mask(a_dev, DMA_BIT_MASK(64))) &&
         !(cur_mask = pci_set_consistent_dma_mask(a_dev, DMA_BIT_MASK(64)))) {
@@ -347,7 +367,7 @@ int pciedev_probe_of_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pci
     a_pciedev->parent_base_dev->dev_phys_addresses[tmp_slot_num].slot_num      = tmp_slot_num;
     a_pciedev->parent_base_dev->dev_phys_addresses[tmp_slot_num].slot_bus        =busNumber;
     a_pciedev->parent_base_dev->dev_phys_addresses[tmp_slot_num].slot_device   = devNumber;
-
+	
     /*******SETUP BARs******/
     a_pciedev->pciedev_all_mems = 0;
     for (i = 0, nToAdd = 1; i < NUMBER_OF_BARS; ++i, nToAdd *= 2){
@@ -375,6 +395,7 @@ int pciedev_probe_of_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pci
             printk(KERN_INFO "PCIEDEV: NO BASE%i address\n", i);
         }
     }
+	
 
     a_pciedev->enbl_irq_num = 0;
     a_pciedev->device_irq_num = 0;
@@ -391,10 +412,11 @@ int pciedev_probe_of_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pci
             printk(KERN_ALERT "$$$$$$$$$$$$$PROBE  NUMBER OF MODULES %i\n", tmp_info);
         }
     }
+	
 
     /*******PREPARE INTERRUPTS******/
     a_pciedev->irq_flag = IRQF_SHARED ;
-#ifdef CONFIG_PCI_MSI
+#if defined(CONFIG_PCI_MSI) && ( LINUX_VERSION_CODE >= KERNEL_VERSION(4,0,0) )
    tmp_msi_num = pci_msi_vec_count(a_dev);
    printk(KERN_ALERT "MSI COUNT %i\n", tmp_msi_num);
 
@@ -419,6 +441,7 @@ int pciedev_probe_of_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pci
     a_pciedev->pci_dev_irq = a_dev->irq;
     printk(KERN_ALERT "MSI ENABLED DEV->IRQ %i\n", a_dev->irq);
     a_pciedev->irq_mode = 0;
+	
 
     /* Send uvents to udev, so it'll create /dev nodes */
     if( a_pciedev->dev_sts){
@@ -438,8 +461,213 @@ int pciedev_probe_of_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pci
 
     register_upciedev_proc2(tmp_slot_num, a_dev_name, a_pciedev);
     a_pciedev->register_size = RW_D32;
+	
 
     a_pciedev_cdev_p->pciedevModuleNum ++;
     return 0;
 }
 EXPORT_SYMBOL(pciedev_probe_of_single_device_exp);
+
+
+int pciedev_remove_single_device_exp(struct pci_dev* a_dev, const pciedev_cdev* a_pciedev_cdev_m, const char* a_dev_name)
+{
+     pciedev_dev                *pciedevdev = 0;
+     int                    tmp_dev_num  = 0;
+     int                    tmp_slot_num  = 0;
+     int                    m_brdNum      = 0;
+     char                f_name[64];
+     char                prc_entr[64];
+     int                   i;
+     int                   nLock = 1;
+     int                   d = 0;
+
+     struct list_head *pos;
+     struct list_head *npos;
+     struct pciedev_prj_info  *tmp_prj_info_list;
+
+    upciedev_file_list *tmp_file_list;
+    struct list_head *fpos, *q;
+
+     printk(KERN_ALERT "PCIEDEV_REMOVE_EXP CALLED\n");
+
+    pciedevdev = dev_get_drvdata(&(a_dev->dev));
+    if(!pciedevdev) return 0;
+	
+    cdev_del(&pciedevdev->cdev);
+	
+    tmp_dev_num  = pciedevdev->dev_num;
+    tmp_slot_num  = pciedevdev->slot_num;
+    m_brdNum      = pciedevdev->brd_num;
+    //*brd_num        = tmp_slot_num; // todo: think on this
+    snprintf(f_name, STR_BUF_LEN, "%ss%d", a_dev_name, tmp_slot_num);
+    snprintf(prc_entr, STR_BUF_LEN, "%ss%d", a_dev_name, tmp_slot_num);
+    printk(KERN_ALERT "PCIEDEV_REMOVE: SLOT %d DEV %d BOARD %i\n", tmp_slot_num, tmp_dev_num, m_brdNum);
+
+    /* now let's be good and free the proj_info_list items. since we will be removing items
+     * off the list using list_del() we need to use a safer version of the list_for_each()
+     * macro aptly named list_for_each_safe(). Note that you MUST use this macro if the loop
+     * involves deletions of items (or moving items from one list to another).
+     */
+    list_for_each_safe(pos,  npos, &pciedevdev->prj_info_list.prj_list ){
+        tmp_prj_info_list = list_entry(pos, struct pciedev_prj_info, prj_list);
+        list_del(pos);
+        kfree(tmp_prj_info_list);
+    }
+
+    printk(KERN_ALERT "REMOVING IRQ_MODE %d\n", pciedevdev->irq_mode);
+    if(pciedevdev->irq_mode){
+       printk(KERN_ALERT "FREE IRQ\n");
+       for(i = 0; i < 32; ++i){
+            if((pciedevdev->enbl_irq_num >> i)&0x1){
+                free_irq(pciedevdev->pci_dev_irq + i, pciedevdev);
+                printk(KERN_ALERT "REMOVING IRQ NUM %i:%i\n", i, pciedevdev->pci_dev_irq + i);
+           }
+       }
+       if(pciedevdev->msi){
+           printk(KERN_ALERT "DISABLE MSI\n");
+           pci_disable_msi((pciedevdev->pciedev_pci_dev));
+       }
+    }else{
+        if(pciedevdev->msi){
+           printk(KERN_ALERT "DISABLE MSI\n");
+           pci_disable_msi((pciedevdev->pciedev_pci_dev));
+       }
+    }
+    pciedevdev->parent_base_dev->dev_phys_addresses[tmp_slot_num].slot_num = 0;
+    pciedevdev->parent_base_dev->dev_phys_addresses[tmp_slot_num].dev_stst = 0;
+    pciedevdev->parent_base_dev->dev_phys_addresses[tmp_slot_num].slot_bus = 0;
+    pciedevdev->parent_base_dev->dev_phys_addresses[tmp_slot_num].slot_device = 0;
+    for(d = 0; d < NUMBER_OF_BARS; ++d){
+        pciedevdev->parent_base_dev->dev_phys_addresses[tmp_slot_num].bars[d].res_start = 0;
+        pciedevdev->parent_base_dev->dev_phys_addresses[tmp_slot_num].bars[d].res_end = 0;
+        pciedevdev->parent_base_dev->dev_phys_addresses[tmp_slot_num].bars[d].res_flag = 0;
+    }
+
+    printk(KERN_ALERT "REMOVE: UNMAPPING MEMORYs\n");
+    //mutex_lock(&pciedevdev->dev_mut);
+    while (nLock){ nLock = EnterCritRegion(&pciedevdev->dev_mut); }
+
+    for (i = 0; i < NUMBER_OF_BARS; ++i){
+        if (pciedevdev->memmory_base[i]){
+            pci_iounmap(a_dev, pciedevdev->memmory_base[i]);
+            pciedevdev->memmory_base[i] = 0;
+            pciedevdev->mem_base[i] = 0;
+            pciedevdev->mem_base_end[i] = 0;
+            pciedevdev->mem_base_flag[i] = 0;
+            pciedevdev->rw_off[i] = 0;
+        }
+    }
+
+    pci_release_regions((pciedevdev->pciedev_pci_dev));
+    printk(KERN_INFO "PCIEDEV_REMOVE:  DESTROY DEVICE MAJOR %i MINOR %i\n",
+               a_pciedev_cdev_m->PCIEDEV_MAJOR, (a_pciedev_cdev_m->PCIEDEV_MINOR + pciedevdev->brd_num));
+    device_destroy(a_pciedev_cdev_m->pciedev_class,
+                   MKDEV(a_pciedev_cdev_m->PCIEDEV_MAJOR,a_pciedev_cdev_m->PCIEDEV_MINOR + pciedevdev->brd_num));
+
+    unregister_upciedev_proc2(tmp_slot_num, a_dev_name);
+
+    pciedevdev->dev_sts   = 0;
+    pciedevdev->binded   = 0;
+    //pciedev_cdev_m->pciedevModuleNum --; // todo: think on this
+    pci_disable_device(a_dev);
+
+    list_for_each_safe(fpos, q, &(pciedevdev->dev_file_list.node_file_list)){
+             tmp_file_list = list_entry(fpos, upciedev_file_list, node_file_list);
+             //tmp_file_list->filp->private_data  = pciedev_cdev_m->pciedev_dev_m[PCIEDEV_NR_DEVS];
+             list_del(fpos);
+             kfree (tmp_file_list);
+             //pciedev_cdev_m->pciedev_dev_m[PCIEDEV_NR_DEVS]->dev_file_ref++;
+    }
+
+    //mutex_unlock(&pciedevdev->dev_mut);
+    LeaveCritRegion(&pciedevdev->dev_mut);
+    return 0;
+}
+EXPORT_SYMBOL(pciedev_remove_single_device_exp);
+
+
+#define _METHOD_	1
+#define PRINT_BITS_FR_INT(...)
+#define PCIE_GEN_NR_DEVS	16
+
+
+static int GetSlotNumber(struct pci_dev *a_pPciDev) // This function should be improved
+{
+	int pcie_cap;
+	u32 tmp_slot_cap = 0;
+
+#if _METHOD_==1
+	if (a_pPciDev->bus)
+	{
+		if (a_pPciDev->bus->parent)
+		{
+			if (a_pPciDev->bus->parent->self)
+			{
+				pcie_cap = pci_find_capability(a_pPciDev->bus->parent->self, PCI_CAP_ID_EXP);
+				pci_read_config_dword(a_pPciDev->bus->parent->self, (pcie_cap + PCI_EXP_SLTCAP), &tmp_slot_cap);
+				//pci_read_config_dword(a_pPciDev->bus->parent->self, (pcie_cap + PCI_EXP_SLTCAP), &tmp_slot_cap);
+				PRINT_BITS_FR_INT(tmp_slot_cap, 0, 19);
+				return (tmp_slot_cap >> 19) % PCIE_GEN_NR_DEVS;
+			}
+
+		} // if (a_pPciDev->bus->parent)
+
+	} // if (a_pPciDev->bus)
+#elif _METHOD_==2
+	if (a_pPciDev->bus)
+	{
+		if (a_pPciDev->bus->self)
+		{
+			pcie_cap = pci_find_capability(a_pPciDev->bus->self, PCI_CAP_ID_EXP);
+			pci_read_config_dword(a_pPciDev->bus->self, (pcie_cap + PCI_EXP_SLTCAP), &tmp_slot_cap);
+			PRINT_BITS_FR_INT(tmp_slot_cap, 0, 19);
+			return (tmp_slot_cap >> 19) % PCIE_GEN_NR_DEVS;
+		}
+
+	} // if (a_pPciDev->bus)
+#elif _METHOD_==3
+	struct pci_bus* pCurBus = a_pPciDev ? a_pPciDev->bus : NULL;
+	struct pci_dev* pCurDev = pCurBus ? pCurBus->self : NULL;
+
+	while (pCurDev)
+	{
+		pcie_cap = pci_find_capability(pCurDev, PCI_CAP_ID_EXP);
+		pci_read_config_dword(pCurDev, (pcie_cap + PCI_EXP_SLTCAP), &tmp_slot_cap);
+
+		PRINT_BITS_FR_INT3_ALL("Trying:", tmp_slot_cap);
+
+		if (tmp_slot_cap & PCI_EXP_FLAGS_SLOT)
+		{
+			PRINT_BITS_FR_INT3_ALL("Found!:", tmp_slot_cap);
+			return (tmp_slot_cap >> 19) % PCIE_GEN_NR_DEVS;
+		}
+
+		pCurBus = pCurBus ? pCurBus->parent : NULL;
+		pCurDev = pCurBus ? pCurBus->self : NULL;
+	}
+#elif _METHOD_==4
+	struct pci_bus* pCurBus = a_pPciDev ? a_pPciDev->bus : NULL;
+	struct pci_dev* pCurDev = pCurBus ? pCurBus->self : NULL;
+
+	while (pCurDev)
+	{
+		pcie_cap = pci_find_capability(pCurDev, PCI_CAP_ID_EXP);
+		pci_read_config_dword(pCurDev, (pcie_cap + PCI_EXP_SLTCAP), &tmp_slot_cap);
+
+		PRINT_BITS_FR_INT3_ALL("Trying:", tmp_slot_cap);
+
+		if ((tmp_slot_cap & 1) && (tmp_slot_cap & 2))
+		{
+			PRINT_BITS_FR_INT3_ALL("Found!:", tmp_slot_cap);
+			return (tmp_slot_cap >> 19) % PCIE_GEN_NR_DEVS;
+		}
+
+		pCurBus = pCurBus ? pCurBus->parent : NULL;
+		pCurDev = pCurBus ? pCurBus->self : NULL;
+	}
+#else
+#error wrong method
+#endif
+
+	return -1;
+}

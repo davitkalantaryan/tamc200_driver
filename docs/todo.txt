@@ -11,4 +11,8 @@
  3. Calling 'register_upciedev_proc' function instide the function 'pciedev_probe_exp' is not correct. 
     The function 'register_upciedev_proc' modifies 3rd arguments 'pciedev_procdir' field for each device.  
     But this field is unique for entire driver. See better implementation in the file  'pciedev_ufn2.c' line:~30. 
-
+ 4. Slot number finding does not works correctly.  
+    file:pciedev_probe_exp.c,line:~129-150 (func:pciedev_probe_exp). 
+	My tries is file:pciedev_ufn2.c,line:590,file:GetSlotNumber. 
+	tmp_parent_num is taken manually for each driver (for example for `esdadio` it is 1). 
+	I think we can calculate this without this manual variable assignment.  

@@ -1,0 +1,10 @@
+
+
+ compile
+
+  make KBUILD_EXTRA_SYMBOLS=${PWD}/../../contrib/upciedev/Upciedev.symvers UPCIEDEV_INCLUDE=${PWD}/../../contrib/upciedev  
+  
+compile and dmesg
+   
+   make KBUILD_EXTRA_SYMBOLS=${PWD}/../../contrib/upciedev/Upciedev.symvers UPCIEDEV_INCLUDE=${PWD}/../../contrib/upciedev && sudo insmod ../../contrib/upciedev/upciedev.ko && sudo dmesg -c && sudo insmod ../ko_files/mtcapitzcpu3_3.13.0-24-generic/tamc200.ko && dmesg
+  

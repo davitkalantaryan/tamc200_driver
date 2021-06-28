@@ -253,6 +253,7 @@ static void DisableInterrupt(struct STamc200* a_pTamc200, int a_ipModule)
     ALERTCT("\n");
 
     spin_lock(&(a_pTamc200->intrLocks[ipModule]));
+	ALERTCT("!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"); // todo: delete this
     if (a_pTamc200->isIrqActive[ipModule]){
         a_pTamc200->isIrqActive[ipModule] = 0;
         spin_unlock(&(a_pTamc200->intrLocks[ipModule]));
@@ -330,7 +331,7 @@ static void __devexit tamc200_remove(struct pci_dev* a_dev)
         char* deviceBar3Address = (char*)pciedevdev->memmory_base[3];
         char* ip_base_addres;
         int   cr;
-        int   tmp_slot_num;
+        //int   tmp_slot_num;
 
         ALERTCT( "SLOT %d BOARD %d\n", pciedevdev->slot_num, pciedevdev->brd_num);
 
@@ -367,8 +368,8 @@ static void __devexit tamc200_remove(struct pci_dev* a_dev)
             }  // switch(pTamc200->carrierType[k]){
         } // for(k = 0; k < TAMC200_NR_SLOTS; ++k)
 
-        memset(pTamc200, 0, sizeof(struct STamc200));
-        pciedev_remove_exp(a_dev,&s_tamc200_cdev, TAMC200_DEVNAME, &tmp_slot_num);
+        pciedev_remove_single_device_exp(a_dev,&s_tamc200_cdev, TAMC200_DEVNAME);
+		memset(pTamc200, 0, sizeof(struct STamc200));
     }
 }
 
@@ -388,13 +389,16 @@ static int __devinit tamc200_probe(struct pci_dev* a_dev, const struct pci_devic
         return -ENOMEM;
     }
     (void)a_id;
+	//pciedev_device_init_exp(dev_p);
+	dev_p->brd_num = -1;
     result = pciedev_probe_of_single_device_exp(a_dev,dev_p,TAMC200_DEVNAME,&s_tamc200_cdev,&s_tamc200FileOps);
     if(result){
         kfree(dev_p);
         ERRCT("pciedev_probe_of_single_device_exp failed\n");
         return result;
     }
-    tmp_brd_num = dev_p->brd_num;
+    tmp_brd_num = ((unsigned int)dev_p->brd_num % TAMC200_NR_DEVS);
+	ALERTCT("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! tmp_brd_num=%d\n",(int)tmp_brd_num);
     if(s_vTamc200_dev[tmp_brd_num].dev_p){
         kfree(dev_p);
         ERRCT("board number %d is already in use\n",tmp_brd_num);
@@ -402,11 +406,11 @@ static int __devinit tamc200_probe(struct pci_dev* a_dev, const struct pci_devic
     }
 
     s_vTamc200_dev[tmp_brd_num].dev_p = dev_p;
+	dev_p->parent = &(s_vTamc200_dev[tmp_brd_num]);
     deviceBar2Address = (char*)dev_p->memmory_base[2];
     deviceBar3Address = (char*)dev_p->memmory_base[3];
-
-    for (cr = 0; cr < TAMC200_NR_CARRIERS; ++cr)
-    {
+	
+    for (cr = 0; cr < TAMC200_NR_CARRIERS; ++cr){
         //if(tamc200_dev[tmp_slot_num].ip_s[k].ip_on)
         {
             ALERTCT("TAMC200_PROBE:  CARRIER %i ENABLED\n", cr);
@@ -431,7 +435,7 @@ static int __devinit tamc200_probe(struct pci_dev* a_dev, const struct pci_devic
 
             ALERTCT("TAMC200_PROBE: MODULE ID %X\n", tmp_module_id);
         }
-    } // for (cr = 0; cr < TAMC200_NR_CARRIERS; ++cr)
+    } // for (cr = 0; cr < TAMC200_NR_CARRIERS; ++cr){
 
     return 0;
 }
@@ -511,6 +515,7 @@ returnPoint:
 static void __exit tamc200_cleanup_module(void)
 {
     ALERTCT("\n");
+    pci_unregister_driver(&s_tamc200_driver);
     upciedev_driver_clean_exp(&s_tamc200_cdev);
 }
 
@@ -519,11 +524,13 @@ static int __init tamc200_init_module(void)
 {
     int i, cr;
     int result;
+	
+	(void)base_upciedev_dev;
 
     ALERTCT("\n");
     result = upciedev_driver_init_exp(&s_tamc200_cdev,&s_tamc200FileOps,TAMC200_DEVNAME);
 
-    if(!result){
+    if(result){
         ERRCT("Unable to init driver\n");
         return result;
     }
