@@ -331,7 +331,7 @@ static void __devexit tamc200_remove(struct pci_dev* a_dev)
         char* deviceBar3Address = (char*)pciedevdev->memmory_base[3];
         char* ip_base_addres;
         int   cr;
-        int   tmp_slot_num;
+        //int   tmp_slot_num;
 
 		ALERTCT("!!!!!!!!!!!!!!!!!!!!!!!!!!! pTamc200=%p\n",pTamc200); // todo: delete this
         ALERTCT( "SLOT %d BOARD %d\n", pciedevdev->slot_num, pciedevdev->brd_num);
@@ -370,7 +370,7 @@ static void __devexit tamc200_remove(struct pci_dev* a_dev)
         } // for(k = 0; k < TAMC200_NR_SLOTS; ++k)
 
         memset(pTamc200, 0, sizeof(struct STamc200));
-        pciedev_remove_exp(a_dev,&s_tamc200_cdev, TAMC200_DEVNAME, &tmp_slot_num);
+        pciedev_remove_single_device_exp(a_dev,&s_tamc200_cdev, TAMC200_DEVNAME);
     }
 }
 
