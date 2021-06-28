@@ -7,6 +7,7 @@
 #include "pciedev_ufn2.h"
 #include "pciedev_ufn.h"
 #include <linux/module.h>
+#include <debug_functions.h>
 
 
 loff_t    pciedev_llseek_exp(struct file *filp, loff_t off, int frm)
@@ -204,6 +205,7 @@ int pciedev_probe_of_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pci
     char prc_entr[64];
 
     int    tmp_msi_num = 0;
+	
 
     if(a_pciedev->binded){
         printk(KERN_WARNING "Device in the slot %d already binded\n",(int)a_pciedev->slot_num);
@@ -262,6 +264,8 @@ int pciedev_probe_of_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pci
         tmp_dev_num  = tmp_slot_num;
         printk(KERN_ALERT "PCIEDEV_PROBE:NTB DEVICE PARENTSLOT NUM %d DEV NUM%d \n",tmp_slot_num,tmp_dev_num);
     }
+	
+	ALERTCT("!!!!!!!!!!!!!!!!!!!!!!!!!!! tmp_slot_num=%d\n",(int)tmp_slot_num);  // todo: delete this
 
     a_pciedev->swap         = 0;
     a_pciedev->slot_num  = tmp_slot_num;
@@ -300,7 +304,7 @@ int pciedev_probe_of_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pci
                    break;
     }
     printk(KERN_ALERT "DAMC: DEVICE PAYLOAD  %d\n",tmp_payload_size);
-
+	
 
     if (!(cur_mask = pci_set_dma_mask(a_dev, DMA_BIT_MASK(64))) &&
         !(cur_mask = pci_set_consistent_dma_mask(a_dev, DMA_BIT_MASK(64)))) {
@@ -343,11 +347,14 @@ int pciedev_probe_of_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pci
     a_pciedev->scratch_offset = 0;
 
    /*****Set Up Base Tables*/
+	if(!a_pciedev->parent_base_dev){
+		a_pciedev->parent_base_dev = &base_upciedev_dev;
+	}
     a_pciedev->parent_base_dev->dev_phys_addresses[tmp_slot_num].dev_stst       = 1;
     a_pciedev->parent_base_dev->dev_phys_addresses[tmp_slot_num].slot_num      = tmp_slot_num;
     a_pciedev->parent_base_dev->dev_phys_addresses[tmp_slot_num].slot_bus        =busNumber;
     a_pciedev->parent_base_dev->dev_phys_addresses[tmp_slot_num].slot_device   = devNumber;
-
+	
     /*******SETUP BARs******/
     a_pciedev->pciedev_all_mems = 0;
     for (i = 0, nToAdd = 1; i < NUMBER_OF_BARS; ++i, nToAdd *= 2){
@@ -375,6 +382,7 @@ int pciedev_probe_of_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pci
             printk(KERN_INFO "PCIEDEV: NO BASE%i address\n", i);
         }
     }
+	
 
     a_pciedev->enbl_irq_num = 0;
     a_pciedev->device_irq_num = 0;
@@ -391,10 +399,11 @@ int pciedev_probe_of_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pci
             printk(KERN_ALERT "$$$$$$$$$$$$$PROBE  NUMBER OF MODULES %i\n", tmp_info);
         }
     }
+	
 
     /*******PREPARE INTERRUPTS******/
     a_pciedev->irq_flag = IRQF_SHARED ;
-#ifdef CONFIG_PCI_MSI
+#if defined(CONFIG_PCI_MSI) && ( LINUX_VERSION_CODE >= KERNEL_VERSION(4,0,0) )
    tmp_msi_num = pci_msi_vec_count(a_dev);
    printk(KERN_ALERT "MSI COUNT %i\n", tmp_msi_num);
 
@@ -419,6 +428,7 @@ int pciedev_probe_of_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pci
     a_pciedev->pci_dev_irq = a_dev->irq;
     printk(KERN_ALERT "MSI ENABLED DEV->IRQ %i\n", a_dev->irq);
     a_pciedev->irq_mode = 0;
+	
 
     /* Send uvents to udev, so it'll create /dev nodes */
     if( a_pciedev->dev_sts){
@@ -438,6 +448,7 @@ int pciedev_probe_of_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pci
 
     register_upciedev_proc2(tmp_slot_num, a_dev_name, a_pciedev);
     a_pciedev->register_size = RW_D32;
+	
 
     a_pciedev_cdev_p->pciedevModuleNum ++;
     return 0;

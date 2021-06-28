@@ -253,6 +253,7 @@ static void DisableInterrupt(struct STamc200* a_pTamc200, int a_ipModule)
     ALERTCT("\n");
 
     spin_lock(&(a_pTamc200->intrLocks[ipModule]));
+	ALERTCT("!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"); // todo: delete this
     if (a_pTamc200->isIrqActive[ipModule]){
         a_pTamc200->isIrqActive[ipModule] = 0;
         spin_unlock(&(a_pTamc200->intrLocks[ipModule]));
@@ -332,6 +333,7 @@ static void __devexit tamc200_remove(struct pci_dev* a_dev)
         int   cr;
         int   tmp_slot_num;
 
+		ALERTCT("!!!!!!!!!!!!!!!!!!!!!!!!!!! pTamc200=%p\n",pTamc200); // todo: delete this
         ALERTCT( "SLOT %d BOARD %d\n", pciedevdev->slot_num, pciedevdev->brd_num);
 
         /*DISABLING INTERRUPTS ON THE MODULES*/
@@ -402,11 +404,11 @@ static int __devinit tamc200_probe(struct pci_dev* a_dev, const struct pci_devic
     }
 
     s_vTamc200_dev[tmp_brd_num].dev_p = dev_p;
+	dev_p->parent = &(s_vTamc200_dev[tmp_brd_num]);
     deviceBar2Address = (char*)dev_p->memmory_base[2];
     deviceBar3Address = (char*)dev_p->memmory_base[3];
-
-    for (cr = 0; cr < TAMC200_NR_CARRIERS; ++cr)
-    {
+	
+    for (cr = 0; cr < TAMC200_NR_CARRIERS; ++cr){
         //if(tamc200_dev[tmp_slot_num].ip_s[k].ip_on)
         {
             ALERTCT("TAMC200_PROBE:  CARRIER %i ENABLED\n", cr);
@@ -431,7 +433,7 @@ static int __devinit tamc200_probe(struct pci_dev* a_dev, const struct pci_devic
 
             ALERTCT("TAMC200_PROBE: MODULE ID %X\n", tmp_module_id);
         }
-    } // for (cr = 0; cr < TAMC200_NR_CARRIERS; ++cr)
+    } // for (cr = 0; cr < TAMC200_NR_CARRIERS; ++cr){
 
     return 0;
 }
@@ -511,6 +513,7 @@ returnPoint:
 static void __exit tamc200_cleanup_module(void)
 {
     ALERTCT("\n");
+    pci_unregister_driver(&s_tamc200_driver);
     upciedev_driver_clean_exp(&s_tamc200_cdev);
 }
 
@@ -523,7 +526,7 @@ static int __init tamc200_init_module(void)
     ALERTCT("\n");
     result = upciedev_driver_init_exp(&s_tamc200_cdev,&s_tamc200FileOps,TAMC200_DEVNAME);
 
-    if(!result){
+    if(result){
         ERRCT("Unable to init driver\n");
         return result;
     }
