@@ -134,6 +134,7 @@ static const struct vm_operations_struct s_tamc200_mmap_vm_ops =
 static int tamc200_mmap(struct file *a_filp, struct vm_area_struct *a_vma)
 {
     int tmp_bar_num = a_vma->vm_pgoff;
+	ALERTCT("tmp_bar_num %d\n",tmp_bar_num);
     if(tmp_bar_num>=NUMBER_OF_BARS){
         int nCarrier = tmp_bar_num-NUMBER_OF_BARS;
         if(nCarrier<TAMC200_NR_CARRIERS){
@@ -142,6 +143,8 @@ static int tamc200_mmap(struct file *a_filp, struct vm_area_struct *a_vma)
             unsigned long sizeFrUser = a_vma->vm_end - a_vma->vm_start;
             unsigned long sizeOrig = IP_TIMER_WHOLE_BUFFER_SIZE_ALL;
             unsigned int size = sizeFrUser>sizeOrig ? sizeOrig : sizeFrUser;
+			
+			ALERTCT("requested interrupt memory for carrier %d\n",nCarrier);
 
             if (!pTamc200->sharedAddresses[nCarrier]){
                 ERRCT("device is not registered for interrupts\n");
@@ -234,7 +237,7 @@ static irqreturn_t tamc200_interrupt(INTR_ARGS(int a_irq, void *a_dev_id, struct
             }
 
             *pnBufferIndex = nNextBufferIndex;
-            ++pTamc200->intrData[cr].numberOfIRQs;
+            ++pTamc200->intrData[cr].numberOfIRQs;  // condition becomes true
             wake_up(&pTamc200->intrData[cr].waitIRQ);
 
             iowrite16(0xFFFF, deviceBar2Address + 0xC); // reset interrupt (see documentation "tamc200_user_manual.pdf", page 24 )
@@ -410,6 +413,10 @@ static int __devinit tamc200_probe(struct pci_dev* a_dev, const struct pci_devic
     deviceBar2Address = (char*)dev_p->memmory_base[2];
     deviceBar3Address = (char*)dev_p->memmory_base[3];
 	
+	// todo: this is wrong approach. 
+	// We should read ip carrier infor and make this if carrier is delay gate generator
+	// for other type of carriers we should make specific stuff for them
+	// hopefully this will not destroy any carrier device
     for (cr = 0; cr < TAMC200_NR_CARRIERS; ++cr){
         //if(tamc200_dev[tmp_slot_num].ip_s[k].ip_on)
         {
@@ -483,7 +490,8 @@ static long  tamc200_ioctl(struct file *a_filp, unsigned int a_cmd, unsigned lon
         nCarrierModule %= TAMC200_NR_CARRIERS;
         if (unlikely(!pTamc200->isIrqActive[nCarrierModule])) return -1;
         lnNextNumberOfIRQDone = pTamc200->intrData[nCarrierModule].numberOfIRQs;
-        nReturn = wait_event_interruptible(pTamc200->intrData[nCarrierModule].waitIRQ, lnNextNumberOfIRQDone <= pTamc200->intrData[nCarrierModule].numberOfIRQs);
+		//  will return -ERESTARTSYS if it was interrupted by a signal and 0 if condition evaluated to true.
+        nReturn = wait_event_interruptible(pTamc200->intrData[nCarrierModule].waitIRQ, lnNextNumberOfIRQDone < pTamc200->intrData[nCarrierModule].numberOfIRQs);
         break;
 
     case IP_TIMER_WAIT_FOR_EVENT_TIMEOUT:{
@@ -497,8 +505,9 @@ static long  tamc200_ioctl(struct file *a_filp, unsigned int a_cmd, unsigned lon
         if (unlikely(!pTamc200->isIrqActive[nCarrierModule])) return -1;
         lnNextNumberOfIRQDone = pTamc200->intrData[nCarrierModule].numberOfIRQs;
         ulnJiffiesTmOut = msecs_to_jiffies(aWaiterStr.miliseconds);
+		//  will return -ERESTARTSYS if it was interrupted by a signal and 0 if condition evaluated to true.
         nReturn = wait_event_interruptible_timeout(pTamc200->intrData[nCarrierModule].waitIRQ,
-                                                   lnNextNumberOfIRQDone <= pTamc200->intrData[nCarrierModule].numberOfIRQs, ulnJiffiesTmOut);
+                                                   lnNextNumberOfIRQDone < pTamc200->intrData[nCarrierModule].numberOfIRQs, ulnJiffiesTmOut);
     }break;
 
     default:

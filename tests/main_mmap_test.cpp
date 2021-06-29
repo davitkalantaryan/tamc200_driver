@@ -20,15 +20,16 @@ int main(int a_argc, char* a_argv[])
         uint16_t regVal;
         int fd = -1;
         void* mmap_address=MAP_FAILED;
-        unsigned long mmap_offset = (unsigned long)(tmp_barx<< MMAP_BAR_SHIFT);
+        unsigned long mmap_offset;
 
-        printf("mmap test. verson 5\n");
+        printf("mmap test. verson 6. MMAP_BAR_SHIFT=%d\n",(int)MMAP_BAR_SHIFT);
 
         if(a_argc<2){
                 fprintf(stderr,"provide bar number to map\n");
                 return 1;
         }
         tmp_barx = (u_int)atoi(a_argv[1]);
+	mmap_offset = (unsigned long)(tmp_barx<< MMAP_BAR_SHIFT);
 
         if(a_argc>2){
                 nod_name = a_argv[2];
@@ -43,6 +44,8 @@ int main(int a_argc, char* a_argv[])
         }
 
         mmap_address = mmap(0, mmap_len_bar, PROT_READ | PROT_WRITE, MAP_SHARED, fd, mmap_offset);
+	//mmap_address = mmap(0, mmap_len_bar, PROT_READ | PROT_WRITE, MAP_SHARED, fd, tmp_barx?4096<<(tmp_barx-1):0);
+	//mmap_address = mmap(0, mmap_len_bar, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 4096*tmp_barx);
         printf("mapped address: %p\n",mmap_address);
 
         if(mmap_address==MAP_FAILED){
