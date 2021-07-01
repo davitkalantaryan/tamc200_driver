@@ -10,6 +10,67 @@
 #include <debug_functions.h>
 
 
+
+int upciedev_driver_init_exp(pciedev_cdev* a_pciedev_cdev_p, const struct file_operations* a_pciedev_fops, const char* a_dev_name)
+{
+    int   result;
+    dev_t devt;
+    char* pcEndPtr;
+
+    (void)base_upciedev_dev;
+    printk(KERN_ALERT "############UPCIEDEV_INIT MODULE  NAME %s\n", a_dev_name);
+
+    a_pciedev_cdev_p->PCIEDEV_MAJOR             = 47;
+    a_pciedev_cdev_p->PCIEDEV_MINOR             = 0;
+    a_pciedev_cdev_p->pciedevModuleNum         = 0;
+    a_pciedev_cdev_p->PCIEDEV_DRV_VER_MAJ = 1;
+    a_pciedev_cdev_p->PCIEDEV_DRV_VER_MIN = 1;
+    a_pciedev_cdev_p->UPCIEDEV_VER_MAJ        = 1;
+    a_pciedev_cdev_p->UPCIEDEV_VER_MIN        = 1;
+
+    result = alloc_chrdev_region(&devt, a_pciedev_cdev_p->PCIEDEV_MINOR, (PCIEDEV_NR_DEVS + 1), a_dev_name);
+    a_pciedev_cdev_p->PCIEDEV_MAJOR = MAJOR(devt);
+    /* Populate sysfs entries */
+    a_pciedev_cdev_p->pciedev_class = class_create(a_pciedev_fops->owner, a_dev_name);
+    /*Get module driver version information*/
+    a_pciedev_cdev_p->UPCIEDEV_VER_MAJ = simple_strtol(THIS_MODULE->version, &pcEndPtr, 10);
+    a_pciedev_cdev_p->UPCIEDEV_VER_MIN = simple_strtol(THIS_MODULE->version + 2, &pcEndPtr, 10);
+    printk(KERN_ALERT "&&&&&UPCIEDEV_INIT CALLED; UPCIEDEV MODULE VERSION %i.%i\n",
+            a_pciedev_cdev_p->UPCIEDEV_VER_MAJ, a_pciedev_cdev_p->UPCIEDEV_VER_MIN);
+
+    a_pciedev_cdev_p->PCIEDEV_DRV_VER_MAJ = simple_strtol(a_pciedev_fops->owner->version, &pcEndPtr, 10);
+    a_pciedev_cdev_p->PCIEDEV_DRV_VER_MIN = simple_strtol(a_pciedev_fops->owner->version + 2, &pcEndPtr, 10);
+    printk(KERN_ALERT "&&&&&UPCIEDEV_INIT CALLED; THIS MODULE VERSION %i.%i\n",
+        a_pciedev_cdev_p->PCIEDEV_DRV_VER_MAJ, a_pciedev_cdev_p->PCIEDEV_DRV_VER_MIN);
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
+    a_pciedev_cdev_p->pciedev_procdir->read_proc = pciedev_procinfo;
+    a_pciedev_cdev_p->pciedev_procdir->data = p_upcie_dev;
+#endif
+
+    return result; /* succeed */
+}
+EXPORT_SYMBOL(upciedev_driver_init_exp);
+
+
+void upciedev_driver_clean_exp(const pciedev_cdev* a_pciedev_cdev_p)
+{
+    dev_t  devno ;
+
+    printk(KERN_ALERT "UPCIEDEV_CLEANUP_MODULE CALLED\n");
+
+    devno = MKDEV(a_pciedev_cdev_p->PCIEDEV_MAJOR, a_pciedev_cdev_p->PCIEDEV_MINOR);
+    unregister_chrdev_region(devno, (PCIEDEV_NR_DEVS + 1));
+    class_destroy(a_pciedev_cdev_p->pciedev_class);
+}
+EXPORT_SYMBOL(upciedev_driver_clean_exp);
+
+
+#if 0
+
+
+
+
 static int GetSlotNumber(struct pci_dev *a_pPciDev); // This function should be improved;
 
 
@@ -111,60 +172,6 @@ void pciedev_device_init(pciedev_dev* a_pciedev_p)
 //    cdev_del(&a_pciedev_p->cdev);
 //}
 //EXPORT_SYMBOL(pciedev_device_clean_exp);
-
-
-int upciedev_driver_init_exp(pciedev_cdev* a_pciedev_cdev_p, const struct file_operations* a_pciedev_fops, const char* a_dev_name)
-{
-    int   result;
-    dev_t devt;
-    char* pcEndPtr;
-
-    printk(KERN_ALERT "############UPCIEDEV_INIT MODULE  NAME %s\n", a_dev_name);
-
-    a_pciedev_cdev_p->PCIEDEV_MAJOR             = 47;
-    a_pciedev_cdev_p->PCIEDEV_MINOR             = 0;
-    a_pciedev_cdev_p->pciedevModuleNum         = 0;
-    a_pciedev_cdev_p->PCIEDEV_DRV_VER_MAJ = 1;
-    a_pciedev_cdev_p->PCIEDEV_DRV_VER_MIN = 1;
-    a_pciedev_cdev_p->UPCIEDEV_VER_MAJ        = 1;
-    a_pciedev_cdev_p->UPCIEDEV_VER_MIN        = 1;
-
-    result = alloc_chrdev_region(&devt, a_pciedev_cdev_p->PCIEDEV_MINOR, (PCIEDEV_NR_DEVS + 1), a_dev_name);
-    a_pciedev_cdev_p->PCIEDEV_MAJOR = MAJOR(devt);
-    /* Populate sysfs entries */
-    a_pciedev_cdev_p->pciedev_class = class_create(a_pciedev_fops->owner, a_dev_name);
-    /*Get module driver version information*/
-    a_pciedev_cdev_p->UPCIEDEV_VER_MAJ = simple_strtol(THIS_MODULE->version, &pcEndPtr, 10);
-    a_pciedev_cdev_p->UPCIEDEV_VER_MIN = simple_strtol(THIS_MODULE->version + 2, &pcEndPtr, 10);
-    printk(KERN_ALERT "&&&&&UPCIEDEV_INIT CALLED; UPCIEDEV MODULE VERSION %i.%i\n",
-            a_pciedev_cdev_p->UPCIEDEV_VER_MAJ, a_pciedev_cdev_p->UPCIEDEV_VER_MIN);
-
-    a_pciedev_cdev_p->PCIEDEV_DRV_VER_MAJ = simple_strtol(a_pciedev_fops->owner->version, &pcEndPtr, 10);
-    a_pciedev_cdev_p->PCIEDEV_DRV_VER_MIN = simple_strtol(a_pciedev_fops->owner->version + 2, &pcEndPtr, 10);
-    printk(KERN_ALERT "&&&&&UPCIEDEV_INIT CALLED; THIS MODULE VERSION %i.%i\n",
-        a_pciedev_cdev_p->PCIEDEV_DRV_VER_MAJ, a_pciedev_cdev_p->PCIEDEV_DRV_VER_MIN);
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
-    a_pciedev_cdev_p->pciedev_procdir->read_proc = pciedev_procinfo;
-    a_pciedev_cdev_p->pciedev_procdir->data = p_upcie_dev;
-#endif
-
-    return result; /* succeed */
-}
-EXPORT_SYMBOL(upciedev_driver_init_exp);
-
-
-void upciedev_driver_clean_exp(const pciedev_cdev* a_pciedev_cdev_p)
-{
-    dev_t  devno ;
-
-    printk(KERN_ALERT "UPCIEDEV_CLEANUP_MODULE CALLED\n");
-
-    devno = MKDEV(a_pciedev_cdev_p->PCIEDEV_MAJOR, a_pciedev_cdev_p->PCIEDEV_MINOR);
-    unregister_chrdev_region(devno, (PCIEDEV_NR_DEVS + 1));
-    class_destroy(a_pciedev_cdev_p->pciedev_class);
-}
-EXPORT_SYMBOL(upciedev_driver_clean_exp);
 
 
 
@@ -311,7 +318,9 @@ int pciedev_probe_of_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pci
                    break;
         case 3:
                    tmp_payload_size = 1024;
-                   break;
+                   break;int pciedev_probe_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pciedev, const char* a_dev_name,
+                                                             struct pciedev_cdev* a_pciedev_cdev_p, const struct file_operations* a_pciedev_fops,
+                                                             int a_tmp_parent_num)
         case 4:
                    tmp_payload_size = 2048;
                    break;
@@ -671,3 +680,6 @@ static int GetSlotNumber(struct pci_dev *a_pPciDev) // This function should be i
 
 	return -1;
 }
+
+
+#endif  // #if 0

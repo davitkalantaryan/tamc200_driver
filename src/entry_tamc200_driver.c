@@ -371,7 +371,7 @@ static void __devexit tamc200_remove(struct pci_dev* a_dev)
             }  // switch(pTamc200->carrierType[k]){
         } // for(k = 0; k < TAMC200_NR_SLOTS; ++k)
 
-        pciedev_remove_single_device_exp(a_dev,&s_tamc200_cdev, TAMC200_DEVNAME);
+        pciedev_remove_single_device_exp(a_dev,&s_tamc200_cdev, TAMC200_DEVNAME,NULL);
 		memset(pTamc200, 0, sizeof(struct STamc200));
     }
 }
@@ -394,7 +394,7 @@ static int __devinit tamc200_probe(struct pci_dev* a_dev, const struct pci_devic
     (void)a_id;
 	//pciedev_device_init_exp(dev_p);
 	dev_p->brd_num = -1;
-    result = pciedev_probe_of_single_device_exp(a_dev,dev_p,TAMC200_DEVNAME,&s_tamc200_cdev,&s_tamc200FileOps);
+    result = pciedev_probe_single_device_exp(a_dev,dev_p,TAMC200_DEVNAME,&s_tamc200_cdev,&s_tamc200FileOps,1);
     if(result){
         kfree(dev_p);
         ERRCT("pciedev_probe_of_single_device_exp failed\n");
@@ -460,6 +460,7 @@ static long  tamc200_ioctl(struct file *a_filp, unsigned int a_cmd, unsigned lon
     DEBUGNEW("\n");
 
     if (unlikely(!dev->dev_sts)){
+        (void)base_upciedev_dev;
         WARNCT("device has been taken out!\n");
         return -ENODEV;
     }
