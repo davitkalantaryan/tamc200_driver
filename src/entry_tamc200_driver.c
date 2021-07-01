@@ -377,6 +377,15 @@ static void __devexit tamc200_remove(struct pci_dev* a_dev)
 }
 
 
+static void DevDestructor(struct pciedev_dev* a_dev)
+{
+	kfree(a_dev);
+}
+
+//#define KFREE_CALL(_dev_p)
+#define KFREE_CALL(_dev_p)	kfree(_dev_p);
+
+
 static int __devinit tamc200_probe(struct pci_dev* a_dev, const struct pci_device_id* a_id)
 {
     char*	deviceBar2Address;
@@ -394,16 +403,17 @@ static int __devinit tamc200_probe(struct pci_dev* a_dev, const struct pci_devic
     (void)a_id;
 	//pciedev_device_init_exp(dev_p);
 	dev_p->brd_num = -1;
+	dev_p->destructor = &DevDestructor;
     result = pciedev_probe_single_device_exp(a_dev,dev_p,TAMC200_DEVNAME,&s_tamc200_cdev,&s_tamc200FileOps,1);
     if(result){
-        kfree(dev_p);
+        KFREE_CALL(dev_p)
         ERRCT("pciedev_probe_of_single_device_exp failed\n");
         return result;
     }
     tmp_brd_num = ((unsigned int)dev_p->brd_num % TAMC200_NR_DEVS);
 	ALERTCT("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! tmp_brd_num=%d\n",(int)tmp_brd_num);
     if(s_vTamc200_dev[tmp_brd_num].dev_p){
-        kfree(dev_p);
+        KFREE_CALL(dev_p)
         ERRCT("board number %d is already in use\n",tmp_brd_num);
         return -EBUSY;
     }
