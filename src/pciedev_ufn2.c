@@ -61,7 +61,9 @@ void upciedev_driver_clean_exp(const pciedev_cdev* a_pciedev_cdev_p)
 
     devno = MKDEV(a_pciedev_cdev_p->PCIEDEV_MAJOR, a_pciedev_cdev_p->PCIEDEV_MINOR);
     unregister_chrdev_region(devno, (PCIEDEV_NR_DEVS));
+	printk(KERN_ALERT "UPCIEDEV_CLEANUP_MODULE CALLED 2\n");
     class_destroy(a_pciedev_cdev_p->pciedev_class);
+	printk(KERN_ALERT "UPCIEDEV_CLEANUP_MODULE CALLED 3\n");
 }
 EXPORT_SYMBOL(upciedev_driver_clean_exp);
 
