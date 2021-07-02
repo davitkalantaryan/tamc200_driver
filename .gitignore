@@ -63,3 +63,4 @@ dkms.conf
 !/workspaces/*_vs/*.vcxproj.filters
 
 /tests/mmap_test
+/tests/hotplug_test

@@ -138,13 +138,14 @@ static int tamc200_mmap(struct file *a_filp, struct vm_area_struct *a_vma)
     if(tmp_bar_num>=NUMBER_OF_BARS){
         int nCarrier = tmp_bar_num-NUMBER_OF_BARS;
         if(nCarrier<TAMC200_NR_CARRIERS){
-            struct pciedev_dev*		dev = a_filp->private_data;
+            struct pciedev_dev*		dev = FILE_TO_DEV(a_filp);
             struct STamc200*		pTamc200 = dev->parent;
             unsigned long sizeFrUser = a_vma->vm_end - a_vma->vm_start;
             unsigned long sizeOrig = IP_TIMER_WHOLE_BUFFER_SIZE_ALL;
             unsigned int size = sizeFrUser>sizeOrig ? sizeOrig : sizeFrUser;
 			
-			ALERTCT("requested interrupt memory for carrier %d\n",nCarrier);
+			ALERTCT("pTamc200=%p, requested interrupt memory for carrier %d\n",(void*)pTamc200,nCarrier);	
+			ALERTCT("Tamc200->sharedAddresses[%d]=%p\n",nCarrier,(void*)(pTamc200->sharedAddresses[nCarrier]));
 
             if (!pTamc200->sharedAddresses[nCarrier]){
                 ERRCT("device is not registered for interrupts\n");
@@ -411,7 +412,6 @@ static int __devinit tamc200_probe(struct pci_dev* a_dev, const struct pci_devic
         return result;
     }
     tmp_brd_num = ((unsigned int)dev_p->brd_num % TAMC200_NR_DEVS);
-	ALERTCT("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! tmp_brd_num=%d\n",(int)tmp_brd_num);
     if(s_vTamc200_dev[tmp_brd_num].dev_p){
         KFREE_CALL(dev_p)
         ERRCT("board number %d is already in use\n",tmp_brd_num);
@@ -422,6 +422,8 @@ static int __devinit tamc200_probe(struct pci_dev* a_dev, const struct pci_devic
 	dev_p->parent = &(s_vTamc200_dev[tmp_brd_num]);
     deviceBar2Address = (char*)dev_p->memmory_base[2];
     deviceBar3Address = (char*)dev_p->memmory_base[3];
+	
+	ALERTCT("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! tmp_brd_num=%d, dev_p->parent=%p\n",(int)tmp_brd_num,dev_p->parent);
 	
 	// todo: this is wrong approach. 
 	// We should read ip carrier infor and make this if carrier is delay gate generator
@@ -460,7 +462,7 @@ static int __devinit tamc200_probe(struct pci_dev* a_dev, const struct pci_devic
 
 static long  tamc200_ioctl(struct file *a_filp, unsigned int a_cmd, unsigned long a_arg)
 {
-    struct pciedev_dev*		dev = a_filp->private_data;
+    struct pciedev_dev*		dev = FILE_TO_DEV(a_filp);
     struct STamc200*		pTamc200 = dev->parent;
     long nReturn = 0;
     long    lnNextNumberOfIRQDone;
