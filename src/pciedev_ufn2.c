@@ -28,7 +28,7 @@ int upciedev_driver_init_exp(pciedev_cdev* a_pciedev_cdev_p, const struct file_o
     a_pciedev_cdev_p->UPCIEDEV_VER_MAJ        = 1;
     a_pciedev_cdev_p->UPCIEDEV_VER_MIN        = 1;
 
-    result = alloc_chrdev_region(&devt, a_pciedev_cdev_p->PCIEDEV_MINOR, (PCIEDEV_NR_DEVS + 1), a_dev_name);
+    result = alloc_chrdev_region(&devt, a_pciedev_cdev_p->PCIEDEV_MINOR, (PCIEDEV_NR_DEVS), a_dev_name);
     a_pciedev_cdev_p->PCIEDEV_MAJOR = MAJOR(devt);
     /* Populate sysfs entries */
     a_pciedev_cdev_p->pciedev_class = class_create(a_pciedev_fops->owner, a_dev_name);
@@ -60,7 +60,7 @@ void upciedev_driver_clean_exp(const pciedev_cdev* a_pciedev_cdev_p)
     printk(KERN_ALERT "UPCIEDEV_CLEANUP_MODULE CALLED\n");
 
     devno = MKDEV(a_pciedev_cdev_p->PCIEDEV_MAJOR, a_pciedev_cdev_p->PCIEDEV_MINOR);
-    unregister_chrdev_region(devno, (PCIEDEV_NR_DEVS + 1));
+    unregister_chrdev_region(devno, (PCIEDEV_NR_DEVS));
     class_destroy(a_pciedev_cdev_p->pciedev_class);
 }
 EXPORT_SYMBOL(upciedev_driver_clean_exp);
