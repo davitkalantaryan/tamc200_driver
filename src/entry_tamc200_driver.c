@@ -131,41 +131,51 @@ static const struct vm_operations_struct s_tamc200_mmap_vm_ops =
 };
 
 
-static int tamc200_mmap(struct file *a_filp, struct vm_area_struct *a_vma)
+static int tamc200_mmap(struct file *filp, struct vm_area_struct *a_vma)
 {
     int tmp_bar_num = a_vma->vm_pgoff;
 	ALERTCT("tmp_bar_num %d\n",tmp_bar_num);
     if(tmp_bar_num>=NUMBER_OF_BARS){
         int nCarrier = tmp_bar_num-NUMBER_OF_BARS;
         if(nCarrier<TAMC200_NR_CARRIERS){
-            struct pciedev_dev*		dev = FILE_TO_DEV(a_filp);
-            struct STamc200*		pTamc200 = dev->parent;
-            unsigned long sizeFrUser = a_vma->vm_end - a_vma->vm_start;
-            unsigned long sizeOrig = IP_TIMER_WHOLE_BUFFER_SIZE_ALL;
-            unsigned int size = sizeFrUser>sizeOrig ? sizeOrig : sizeFrUser;
-			
-			ALERTCT("pTamc200=%p, requested interrupt memory for carrier %d\n",(void*)pTamc200,nCarrier);	
-			ALERTCT("Tamc200->sharedAddresses[%d]=%p\n",nCarrier,(void*)(pTamc200->sharedAddresses[nCarrier]));
+            struct file_data* file_data_p = filp->private_data;
+            struct pciedev_dev *dev = file_data_p->pciedev_p;
 
-            if (!pTamc200->sharedAddresses[nCarrier]){
-                ERRCT("device is not registered for interrupts\n");
-                return -ENODEV;
+            if (EnterCritRegion(&dev->dev_mut)){ return -ERESTARTSYS; }
+
+            if (dev->hot_plug_events_counter == file_data_p->hot_plug_number_file_openned){
+                struct STamc200*		pTamc200 = dev->parent;
+                unsigned long sizeFrUser = a_vma->vm_end - a_vma->vm_start;
+                unsigned long sizeOrig = IP_TIMER_WHOLE_BUFFER_SIZE_ALL;
+                unsigned int size = sizeFrUser>sizeOrig ? sizeOrig : sizeFrUser;
+
+                ALERTCT("requested interrupt memory for carrier %d\n",nCarrier);
+
+                if (!pTamc200->sharedAddresses[nCarrier]){
+                    LeaveCritRegion(&dev->dev_mut);
+                    ERRCT("device is not registered for interrupts\n");
+                    return -ENODEV;
+                }
+
+                if (remap_pfn_range(a_vma, a_vma->vm_start, virt_to_phys((void *)pTamc200->sharedAddresses[nCarrier])>>PAGE_SHIFT,size,a_vma->vm_page_prot)<0){
+                    LeaveCritRegion(&dev->dev_mut);
+                    ERRCT("remap_pfn_range failed\n");
+                    return -EIO;
+                }
+
+                a_vma->vm_private_data = pTamc200;
+                a_vma->vm_ops = &s_tamc200_mmap_vm_ops;
+                tamc200_vma_open(a_vma);
+                LeaveCritRegion(&dev->dev_mut);
+                return 0;
             }
 
-            if (remap_pfn_range(a_vma, a_vma->vm_start, virt_to_phys((void *)pTamc200->sharedAddresses[nCarrier])>>PAGE_SHIFT,size,a_vma->vm_page_prot)<0){
-                ERRCT("remap_pfn_range failed\n");
-                return -EIO;
-            }
+            LeaveCritRegion(&dev->dev_mut);
 
-            a_vma->vm_private_data = pTamc200;
-            a_vma->vm_ops = &s_tamc200_mmap_vm_ops;
-            tamc200_vma_open(a_vma);
-
-            return 0;
         }
     }
 
-    return pciedev_remap_mmap_exp(a_filp,a_vma);
+    return pciedev_remap_mmap_exp(filp,a_vma);
 }
 
 
