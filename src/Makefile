@@ -49,15 +49,15 @@ compinstall:
 	#sudo chmod 666 /dev/pcie_gen_init
 compile:
 	#cp $(KO_FILES)/Module.symvers.pcie_gen_drv ./Module.symvers
-	make -C /lib/modules/$(KVERSION)/build M=$(PWD) modules
+	make -C /lib/modules/$(KVERSION)/build M=$(mkfile_dir) modules
 	mkdir -p $(KO_FILES)
 	cp Module.symvers $(KO_FILES)/Module.symvers.$(MODULE_NAME)
-	mv $(MODULE_NAME).ko $(KO_FILES)/.
+	cp $(MODULE_NAME).ko $(KO_FILES)/.
 .PHONY: clean
 clean:
 	rm -f $(KO_FILES)/$(MODULE_NAME).ko
 	rm -f $(KO_FILES)/Module.symvers.$(MODULE_NAME)
-	test ! -d /lib/modules/$(KVERSION) || make -C /lib/modules/$(KVERSION)/build M=$(PWD) clean
+	test ! -d /lib/modules/$(KVERSION) || make -C /lib/modules/$(KVERSION)/build M=$(mkfile_dir) clean
 	
 
 EXTRA_CFLAGS	+= -I$(UPCIEDEV_INCLUDE)

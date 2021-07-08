@@ -51,4 +51,5 @@ OTHER_FILES +=	\
 	$${repositoryRoot}/.gitignore			\
 	$${repositoryRoot}/LICENSE			\
 	$${repositoryRoot}/README.md			\
+	$${repositoryRoot}/src/dkms.conf			\
 	$${repositoryRoot}/src/Makefile

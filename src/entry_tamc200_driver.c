@@ -59,7 +59,7 @@
 
 MODULE_AUTHOR("Davit Kalantaryan, Ludwig Petrosyan");
 MODULE_DESCRIPTION("Driver for TEWS TAMC200 IP carrier");
-MODULE_VERSION("1.1.0");
+MODULE_VERSION("2.0.0");
 MODULE_LICENSE("Dual BSD/GPL");
 
 #define TAMC200_VENDOR_ID    0x10B5	/* TEWS vendor ID */
