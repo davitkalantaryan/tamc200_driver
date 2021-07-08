@@ -17,6 +17,7 @@ endif
 
 ifndef UPCIEDEV_INCLUDE
 	UPCIEDEV_INCLUDE = /usr/include
+	# UPCIEDEV_INCLUDE = /usr/src/upciedev-1.0.105
 endif
 
 CUR_DIR		=$(mkfile_dir)
