@@ -49,7 +49,7 @@ OTHER_FILES += $${DOCS_MD}
 OTHER_FILES +=	\
         $${repositoryRoot}/.gitattributes		\
 	$${repositoryRoot}/.gitignore			\
+	$${repositoryRoot}/dkms.conf			\
 	$${repositoryRoot}/LICENSE			\
 	$${repositoryRoot}/README.md			\
-	$${repositoryRoot}/src/dkms.conf			\
 	$${repositoryRoot}/src/Makefile
