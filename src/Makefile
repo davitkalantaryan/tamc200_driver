@@ -16,8 +16,7 @@ ifndef KO_FILES
 endif
 
 ifndef UPCIEDEV_INCLUDE
-	UPCIEDEV_INCLUDE = /usr/include
-	# UPCIEDEV_INCLUDE = /usr/src/upciedev-1.0.105
+	UPCIEDEV_INCLUDE = -I/usr/include -I/usr/src/upciedev-1.0.105
 endif
 
 CUR_DIR		=$(mkfile_dir)
@@ -61,9 +60,7 @@ clean:
 	test ! -d /lib/modules/$(KVERSION) || make -C /lib/modules/$(KVERSION)/build M=$(mkfile_dir) clean
 	
 
-EXTRA_CFLAGS	+= -I$(UPCIEDEV_INCLUDE)
-#EXTRA_CFLAGS	+= -I/doocs/develop/include
-#EXTRA_CFLAGS	+= -I/doocs/develop/common/include
+EXTRA_CFLAGS	+= $(UPCIEDEV_INCLUDE)
 #EXTRA_CFLAGS	+= -D_NEW_ADDED_CODE -DUSE_SEMAPHORE
 ifndef KBUILD_EXTRA_SYMBOLS
 	KBUILD_EXTRA_SYMBOLS = /lib/modules/$(KVERSION)/upciedev/Upciedev.symvers
