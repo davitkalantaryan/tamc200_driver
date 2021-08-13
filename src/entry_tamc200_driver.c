@@ -59,7 +59,7 @@
 
 MODULE_AUTHOR("Davit Kalantaryan, Ludwig Petrosyan");
 MODULE_DESCRIPTION("Driver for TEWS TAMC200 IP carrier");
-MODULE_VERSION("1.1.0");
+MODULE_VERSION("2.0.0");
 MODULE_LICENSE("Dual BSD/GPL");
 
 #define TAMC200_VENDOR_ID    0x10B5	/* TEWS vendor ID */
@@ -131,40 +131,51 @@ static const struct vm_operations_struct s_tamc200_mmap_vm_ops =
 };
 
 
-static int tamc200_mmap(struct file *a_filp, struct vm_area_struct *a_vma)
+static int tamc200_mmap(struct file *filp, struct vm_area_struct *a_vma)
 {
     int tmp_bar_num = a_vma->vm_pgoff;
 	ALERTCT("tmp_bar_num %d\n",tmp_bar_num);
     if(tmp_bar_num>=NUMBER_OF_BARS){
         int nCarrier = tmp_bar_num-NUMBER_OF_BARS;
         if(nCarrier<TAMC200_NR_CARRIERS){
-            struct pciedev_dev*		dev = a_filp->private_data;
-            struct STamc200*		pTamc200 = dev->parent;
-            unsigned long sizeFrUser = a_vma->vm_end - a_vma->vm_start;
-            unsigned long sizeOrig = IP_TIMER_WHOLE_BUFFER_SIZE_ALL;
-            unsigned int size = sizeFrUser>sizeOrig ? sizeOrig : sizeFrUser;
-			
-			ALERTCT("requested interrupt memory for carrier %d\n",nCarrier);
+            struct file_data* file_data_p = filp->private_data;
+            struct pciedev_dev *dev = file_data_p->pciedev_p;
 
-            if (!pTamc200->sharedAddresses[nCarrier]){
-                ERRCT("device is not registered for interrupts\n");
-                return -ENODEV;
+            if (EnterCritRegion(&dev->dev_mut)){ return -ERESTARTSYS; }
+
+            if (dev->hot_plug_events_counter == file_data_p->hot_plug_number_file_openned){
+                struct STamc200*		pTamc200 = dev->parent;
+                unsigned long sizeFrUser = a_vma->vm_end - a_vma->vm_start;
+                unsigned long sizeOrig = IP_TIMER_WHOLE_BUFFER_SIZE_ALL;
+                unsigned int size = sizeFrUser>sizeOrig ? sizeOrig : sizeFrUser;
+
+                ALERTCT("requested interrupt memory for carrier %d\n",nCarrier);
+
+                if (!pTamc200->sharedAddresses[nCarrier]){
+                    LeaveCritRegion(&dev->dev_mut);
+                    ERRCT("device is not registered for interrupts\n");
+                    return -ENODEV;
+                }
+
+                if (remap_pfn_range(a_vma, a_vma->vm_start, virt_to_phys((void *)pTamc200->sharedAddresses[nCarrier])>>PAGE_SHIFT,size,a_vma->vm_page_prot)<0){
+                    LeaveCritRegion(&dev->dev_mut);
+                    ERRCT("remap_pfn_range failed\n");
+                    return -EIO;
+                }
+
+                a_vma->vm_private_data = pTamc200;
+                a_vma->vm_ops = &s_tamc200_mmap_vm_ops;
+                tamc200_vma_open(a_vma);
+                LeaveCritRegion(&dev->dev_mut);
+                return 0;
             }
 
-            if (remap_pfn_range(a_vma, a_vma->vm_start, virt_to_phys((void *)pTamc200->sharedAddresses[nCarrier])>>PAGE_SHIFT,size,a_vma->vm_page_prot)<0){
-                ERRCT("remap_pfn_range failed\n");
-                return -EIO;
-            }
+            LeaveCritRegion(&dev->dev_mut);
 
-            a_vma->vm_private_data = pTamc200;
-            a_vma->vm_ops = &s_tamc200_mmap_vm_ops;
-            tamc200_vma_open(a_vma);
-
-            return 0;
         }
     }
 
-    return pciedev_remap_mmap_exp(a_filp,a_vma);
+    return pciedev_remap_mmap_exp(filp,a_vma);
 }
 
 
@@ -371,10 +382,19 @@ static void __devexit tamc200_remove(struct pci_dev* a_dev)
             }  // switch(pTamc200->carrierType[k]){
         } // for(k = 0; k < TAMC200_NR_SLOTS; ++k)
 
-        pciedev_remove_single_device_exp(a_dev,&s_tamc200_cdev, TAMC200_DEVNAME);
+        pciedev_remove_single_device_exp(a_dev,&s_tamc200_cdev, TAMC200_DEVNAME,NULL);
 		memset(pTamc200, 0, sizeof(struct STamc200));
     }
 }
+
+
+static void DevDestructor(struct pciedev_dev* a_dev)
+{
+	kfree(a_dev);
+}
+
+//#define KFREE_CALL(_dev_p)
+#define KFREE_CALL(_dev_p)	kfree(_dev_p);
 
 
 static int __devinit tamc200_probe(struct pci_dev* a_dev, const struct pci_device_id* a_id)
@@ -394,16 +414,16 @@ static int __devinit tamc200_probe(struct pci_dev* a_dev, const struct pci_devic
     (void)a_id;
 	//pciedev_device_init_exp(dev_p);
 	dev_p->brd_num = -1;
-    result = pciedev_probe_of_single_device_exp(a_dev,dev_p,TAMC200_DEVNAME,&s_tamc200_cdev,&s_tamc200FileOps);
+	dev_p->destructor = &DevDestructor;
+    result = pciedev_probe_single_device_exp(a_dev,dev_p,TAMC200_DEVNAME,&s_tamc200_cdev,&s_tamc200FileOps,1);
     if(result){
-        kfree(dev_p);
+        KFREE_CALL(dev_p)
         ERRCT("pciedev_probe_of_single_device_exp failed\n");
         return result;
     }
     tmp_brd_num = ((unsigned int)dev_p->brd_num % TAMC200_NR_DEVS);
-	ALERTCT("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! tmp_brd_num=%d\n",(int)tmp_brd_num);
     if(s_vTamc200_dev[tmp_brd_num].dev_p){
-        kfree(dev_p);
+        KFREE_CALL(dev_p)
         ERRCT("board number %d is already in use\n",tmp_brd_num);
         return -EBUSY;
     }
@@ -412,6 +432,8 @@ static int __devinit tamc200_probe(struct pci_dev* a_dev, const struct pci_devic
 	dev_p->parent = &(s_vTamc200_dev[tmp_brd_num]);
     deviceBar2Address = (char*)dev_p->memmory_base[2];
     deviceBar3Address = (char*)dev_p->memmory_base[3];
+	
+	ALERTCT("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! tmp_brd_num=%d, dev_p->parent=%p\n",(int)tmp_brd_num,dev_p->parent);
 	
 	// todo: this is wrong approach. 
 	// We should read ip carrier infor and make this if carrier is delay gate generator
@@ -450,7 +472,7 @@ static int __devinit tamc200_probe(struct pci_dev* a_dev, const struct pci_devic
 
 static long  tamc200_ioctl(struct file *a_filp, unsigned int a_cmd, unsigned long a_arg)
 {
-    struct pciedev_dev*		dev = a_filp->private_data;
+    struct pciedev_dev*		dev = FILE_TO_DEV(a_filp);
     struct STamc200*		pTamc200 = dev->parent;
     long nReturn = 0;
     long    lnNextNumberOfIRQDone;
@@ -460,6 +482,7 @@ static long  tamc200_ioctl(struct file *a_filp, unsigned int a_cmd, unsigned lon
     DEBUGNEW("\n");
 
     if (unlikely(!dev->dev_sts)){
+        (void)base_upciedev_dev;
         WARNCT("device has been taken out!\n");
         return -ENODEV;
     }

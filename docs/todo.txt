@@ -16,3 +16,22 @@
 	My tries is file:pciedev_ufn2.c,line:590,file:GetSlotNumber. 
 	tmp_parent_num is taken manually for each driver (for example for `esdadio` it is 1). 
 	I think we can calculate this without this manual variable assignment.  
+ 5. Make error more informative.
+    if (EnterCritRegion(&dev->dev_mut)){ return -ERESTARTSYS; }
+
+    if (dev->hot_plug_events_counter != file_data_p->hot_plug_number_file_openned){
+        int number_of_hot_plug_events_after_file_open = dev->hot_plug_events_counter - file_data_p->hot_plug_number_file_openned;
+        int isOdd = number_of_hot_plug_events_after_file_open%2;
+        int numberOfInsertionsAfterFileOpen = number_of_hot_plug_events_after_file_open/2;
+        LeaveCritRegion(&dev->dev_mut);
+        if(isOdd){
+            ERRCT("NO DEVICE %d. Devices removed %d times and inserted %d times\n",
+                  dev->dev_num,numberOfInsertionsAfterFileOpen+1,numberOfInsertionsAfterFileOpen);
+            return -ENODEV;
+        }
+        else{
+            ERRCT("DIFFERENT DEVICE %d. Devices removed %d times and inserted %d times\n",
+                  dev->dev_num,numberOfInsertionsAfterFileOpen,numberOfInsertionsAfterFileOpen);
+            return -UPCIEDEV_OTHER_DEVICE;
+        }
+	}

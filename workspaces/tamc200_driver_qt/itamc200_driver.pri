@@ -18,6 +18,7 @@ LINUX_HEADERS_PATH = /usr/src/linux-headers-$${KERNEL_VERSION}
 #OTHER_FILES += $$system(find -L $$SRC_PROJECT_PATH -type f -not -name "*.h" -not -name "*.c" -not -name "*.S" )
 
 # here add all developer host specific include paths
+INCLUDEPATH += /usr/src/linux-headers-3.13.0-24/include
 INCLUDEPATH += /usr/src/linux-headers-5.4.0-73/include
 
 INCLUDEPATH += $${repositoryRoot}/../contrib/upciedev
