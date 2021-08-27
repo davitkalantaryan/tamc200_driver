@@ -390,7 +390,7 @@ static void __devexit tamc200_remove(struct pci_dev* a_dev)
 
 static void DevDestructor(struct pciedev_dev* a_dev)
 {
-	kfree(a_dev);
+    kfree(a_dev);
 }
 
 //#define KFREE_CALL(_dev_p)
