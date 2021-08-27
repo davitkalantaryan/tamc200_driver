@@ -1,0 +1,2 @@
+SUBSYSTEM=="tamc200",	MODE="0666"
+

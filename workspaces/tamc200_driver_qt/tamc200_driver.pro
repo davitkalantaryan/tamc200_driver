@@ -36,7 +36,10 @@ INCLUDEPATH += $$system(find -L $$LINUX_HEADERS_PATH/arch/$$ARCH/include -type d
 
 SOURCES +=	\
 	$${SRC_PROJECT_PATH}/entry_tamc200_driver.c			\
-	$${SRC_PROJECT_PATH}/pciedev_ufn2.c
+	$${SRC_PROJECT_PATH}/pciedev_ufn2.c					\
+	\
+	$${repositoryRoot}/tests/main_hotplug_test.cpp		\
+	$${repositoryRoot}/tests/main_mmap_test.cpp
 
 HEADERS +=	\
         $${SRC_PROJECT_PATH}/pciedev_ufn2.h				\
@@ -52,4 +55,6 @@ OTHER_FILES +=	\
 	$${repositoryRoot}/dkms.conf			\
 	$${repositoryRoot}/LICENSE			\
 	$${repositoryRoot}/README.md			\
-	$${repositoryRoot}/src/Makefile
+	$${repositoryRoot}/src/Makefile			\
+	$${repositoryRoot}/tests/hotplug_test.Makefile	\
+	$${repositoryRoot}/tests/mmap_test.Makefile

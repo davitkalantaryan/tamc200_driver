@@ -1,6 +1,12 @@
 #
 # file:		Makefile 
 # purpose:	Makefile for compiling Linux device driver for tamc200 devices
+# 
+# export KBUILD_EXTRA_SYMBOLS=~/dev/.desy/tamc200_driver_ide/contrib/upciedev/Upciedev.symvers
+# or
+# make -C src -e KBUILD_EXTRA_SYMBOLS=$PWD/../contrib/upciedev/Upciedev.symvers
+# or
+# make KBUILD_EXTRA_SYMBOLS=$PWD/../../contrib/upciedev/Upciedev.symvers
 #
 
 MODULE_NAME	= tamc200
@@ -16,7 +22,7 @@ ifndef KO_FILES
 endif
 
 ifndef UPCIEDEV_INCLUDE
-	UPCIEDEV_INCLUDE = -I/usr/include -I/usr/src/upciedev-1.0.105
+	UPCIEDEV_INCLUDE = -I$(mkfile_dir)/../../contrib/upciedev -I/usr/include -I/usr/src/upciedev-1.0.105
 endif
 
 CUR_DIR		=$(mkfile_dir)
