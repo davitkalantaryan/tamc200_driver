@@ -52,7 +52,7 @@ static int pciedev_cdev_init(pciedev_dev* a_pciedev_p, const pciedev_cdev* a_pci
     return result;
 }
 
-static void pciedev_device_init(pciedev_dev* a_pciedev_p)
+static void pciedev_device_init(pciedev_dev* a_pciedev_p, pciedev_cdev* a_parent_dev)
 {
     INIT_LIST_HEAD(&(a_pciedev_p->prj_info_list.prj_list));
     INIT_LIST_HEAD(&(a_pciedev_p->module_info_list.module_list));
@@ -65,8 +65,9 @@ static void pciedev_device_init(pciedev_dev* a_pciedev_p)
     a_pciedev_p->dev_dma_64mask         = 0;
     a_pciedev_p->pciedev_all_mems       = 0;
     a_pciedev_p->binded                 = 0;
-    a_pciedev_p->parent_base_dev        = &base_upciedev_dev; // todo: cleanup this part and get rid of static variable 'base_upciedev_dev'
+    //a_pciedev_p->parent_base_dev        = &base_upciedev_dev; // todo: cleanup this part and get rid of static variable 'base_upciedev_dev'
     //a_pciedev_p->parent_base_dev     = p_base_upciedev_dev;
+    a_pciedev_p->parent_dev             = a_parent_dev;
     a_pciedev_p->device_inited          = 1;
     printk(KERN_ALERT "INIT ADD PARENT BASE\n");
 }
@@ -152,7 +153,7 @@ int upciedev_driver_init_exp(pciedev_cdev* a_pciedev_cdev_p, const struct file_o
     dev_t devt;
     char* pcEndPtr;
 
-    (void)base_upciedev_dev;
+    //(void)base_upciedev_dev;
     printk(KERN_ALERT "############UPCIEDEV_INIT MODULE  NAME %s\n", a_dev_name);
 
     a_pciedev_cdev_p->PCIEDEV_MAJOR             = 47;
@@ -251,7 +252,7 @@ int pciedev_remove_single_device_exp(struct pci_dev* a_dev, const pciedev_cdev* 
 
     pciedevdev = dev_get_drvdata(&(a_dev->dev));
     if(!pciedevdev) {
-        (void)base_upciedev_dev;
+        //(void)base_upciedev_dev;
         return 0;
     }
 
@@ -303,14 +304,14 @@ int pciedev_remove_single_device_exp(struct pci_dev* a_dev, const pciedev_cdev* 
            pci_disable_msi((pciedevdev->pciedev_pci_dev));
        }
     }
-    pciedevdev->parent_base_dev->dev_phys_addresses[tmp_slot_num].slot_num = 0;
-    pciedevdev->parent_base_dev->dev_phys_addresses[tmp_slot_num].dev_stst = 0;
-    pciedevdev->parent_base_dev->dev_phys_addresses[tmp_slot_num].slot_bus = 0;
-    pciedevdev->parent_base_dev->dev_phys_addresses[tmp_slot_num].slot_device = 0;
+    pciedevdev->parent_dev->dev_phys_addresses[tmp_slot_num].slot_num = 0;
+    pciedevdev->parent_dev->dev_phys_addresses[tmp_slot_num].dev_stst = 0;
+    pciedevdev->parent_dev->dev_phys_addresses[tmp_slot_num].slot_bus = 0;
+    pciedevdev->parent_dev->dev_phys_addresses[tmp_slot_num].slot_device = 0;
     for(d = 0; d < NUMBER_OF_BARS; ++d){
-        pciedevdev->parent_base_dev->dev_phys_addresses[tmp_slot_num].bars[d].res_start = 0;
-        pciedevdev->parent_base_dev->dev_phys_addresses[tmp_slot_num].bars[d].res_end = 0;
-        pciedevdev->parent_base_dev->dev_phys_addresses[tmp_slot_num].bars[d].res_flag = 0;
+        pciedevdev->parent_dev->dev_phys_addresses[tmp_slot_num].bars[d].res_start = 0;
+        pciedevdev->parent_dev->dev_phys_addresses[tmp_slot_num].bars[d].res_end = 0;
+        pciedevdev->parent_dev->dev_phys_addresses[tmp_slot_num].bars[d].res_flag = 0;
     }
 
     printk(KERN_ALERT "REMOVE: UNMAPPING MEMORYs\n");
@@ -411,7 +412,7 @@ int pciedev_probe_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pciede
 #endif
 
     if(!a_pciedev->device_inited){ // first let's init in order to be able to use mutex
-        pciedev_device_init(a_pciedev);
+        pciedev_device_init(a_pciedev, a_pciedev_cdev_p);
     }
 
     while (EnterCritRegion(&a_pciedev->dev_mut)){} // retur on error is not the case
@@ -564,10 +565,10 @@ int pciedev_probe_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pciede
     a_pciedev->scratch_offset = 0;
 
    /*****Set Up Base Tables*/
-    a_pciedev->parent_base_dev->dev_phys_addresses[tmp_slot_num].dev_stst       = 1;
-    a_pciedev->parent_base_dev->dev_phys_addresses[tmp_slot_num].slot_num      = tmp_slot_num;
-    a_pciedev->parent_base_dev->dev_phys_addresses[tmp_slot_num].slot_bus        =busNumber;
-    a_pciedev->parent_base_dev->dev_phys_addresses[tmp_slot_num].slot_device   = devNumber;
+    a_pciedev->parent_dev->dev_phys_addresses[tmp_slot_num].dev_stst       = 1;
+    a_pciedev->parent_dev->dev_phys_addresses[tmp_slot_num].slot_num      = tmp_slot_num;
+    a_pciedev->parent_dev->dev_phys_addresses[tmp_slot_num].slot_bus        =busNumber;
+    a_pciedev->parent_dev->dev_phys_addresses[tmp_slot_num].slot_device   = devNumber;
 
     /*******SETUP BARs******/
     a_pciedev->pciedev_all_mems = 0;
@@ -587,9 +588,9 @@ int pciedev_probe_single_device_exp(struct pci_dev* a_dev, pciedev_dev* a_pciede
             a_pciedev->rw_off[i] = (res_end - res_start);
             a_pciedev->pciedev_all_mems += nToAdd;
 
-            a_pciedev->parent_base_dev->dev_phys_addresses[tmp_slot_num].bars[i].res_start = res_start;
-            a_pciedev->parent_base_dev->dev_phys_addresses[tmp_slot_num].bars[i].res_end = res_end;
-            a_pciedev->parent_base_dev->dev_phys_addresses[tmp_slot_num].bars[i].res_flag = res_flag;
+            a_pciedev->parent_dev->dev_phys_addresses[tmp_slot_num].bars[i].res_start = res_start;
+            a_pciedev->parent_dev->dev_phys_addresses[tmp_slot_num].bars[i].res_end = res_end;
+            a_pciedev->parent_dev->dev_phys_addresses[tmp_slot_num].bars[i].res_flag = res_flag;
         } else{
             a_pciedev->memmory_base[i] = 0;
             a_pciedev->rw_off[i]       = 0;
