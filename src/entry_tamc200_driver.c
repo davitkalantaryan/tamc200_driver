@@ -482,7 +482,6 @@ static long  tamc200_ioctl(struct file *a_filp, unsigned int a_cmd, unsigned lon
     DEBUGNEW("\n");
 
     if (unlikely(!dev->dev_sts)){
-        (void)base_upciedev_dev;
         WARNCT("device has been taken out!\n");
         return -ENODEV;
     }
@@ -557,8 +556,6 @@ static int __init tamc200_init_module(void)
     int i, cr;
     int result;
 	
-	(void)base_upciedev_dev;
-
     ALERTCT("\n");
     result = upciedev_driver_init_exp(&s_tamc200_cdev,&s_tamc200FileOps,TAMC200_DEVNAME);
 

@@ -6,7 +6,7 @@
 # or
 # make -C src -e KBUILD_EXTRA_SYMBOLS=$PWD/../contrib/upciedev/Upciedev.symvers
 # or
-# make KBUILD_EXTRA_SYMBOLS=$PWD/../../contrib/upciedev/Upciedev.symvers
+# make -C src KBUILD_EXTRA_SYMBOLS=$PWD/../../contrib/upciedev/Upciedev.symvers
 #
 
 MODULE_NAME	= tamc200
