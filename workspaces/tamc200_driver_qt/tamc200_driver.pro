@@ -1,7 +1,9 @@
 
 # 
 
-include ($${PWD}/itamc200_driver.pri)
+upciedevRepoRoot = $${PWD}/../../../contrib/upciedev_ide
+include ("$${upciedevRepoRoot}/workspaces/upciedev_ide_qt/idrivers.pri")
+repositoryRoot = $${PWD}/../..
 
 TEMPLATE = aux
 
@@ -11,8 +13,8 @@ CONFIG -= qt
 DEFINES += __INTELISENSE__
 DEFINES += __KERNEL__
 
-DOCS_TXT	= $$system($${repositoryRoot}/scripts/findfiles $${repositoryRoot}/docs   .txt)
-DOCS_MD		= $$system($${repositoryRoot}/scripts/findfiles $${repositoryRoot}/docs   .md)
+DOCS_TXT	= $$system($${upciedevRepoRoot}/scripts/findfiles $${repositoryRoot}/docs   .txt)
+DOCS_MD		= $$system($${upciedevRepoRoot}/scripts/findfiles $${repositoryRoot}/docs   .md)
 
 ARCH=arm64
 repositoryRoot = $${PWD}/../..
@@ -27,34 +29,34 @@ OTHER_FILES += $$system(find -L $$SRC_PROJECT_PATH -type f -not -name "*.h" -not
 # here add all developer host specific include paths
 INCLUDEPATH += /usr/src/linux-headers-5.4.0-73/include
 
-INCLUDEPATH += $${repositoryRoot}/../contrib/upciedev
-INCLUDEPATH += $${LINUX_HEADERS_PATH}/include
+INCLUDEPATH += "$${repositoryRoot}/../contrib/upciedev"
+INCLUDEPATH += "$${LINUX_HEADERS_PATH}/include"
 INCLUDEPATH += $$system(find -L $$SRC_PROJECT_PATH -type d)
 INCLUDEPATH += $$system(find -L $$LINUX_HEADERS_PATH/include -type d)
 INCLUDEPATH += $$system(find -L $$LINUX_HEADERS_PATH/arch/$$ARCH/include -type d)
 
 
 SOURCES +=	\
-	$${SRC_PROJECT_PATH}/entry_tamc200_driver.c			\
-	$${SRC_PROJECT_PATH}/pciedev_ufn2.c					\
+	"$${SRC_PROJECT_PATH}/entry_tamc200_driver.c"			\
+	"$${SRC_PROJECT_PATH}/pciedev_ufn2.c"					\
 	\
-	$${repositoryRoot}/tests/main_hotplug_test.cpp		\
-	$${repositoryRoot}/tests/main_mmap_test.cpp
+	"$${repositoryRoot}/tests/main_hotplug_test.cpp"		\
+	"$${repositoryRoot}/tests/main_mmap_test.cpp"
 
 HEADERS +=	\
-        $${SRC_PROJECT_PATH}/pciedev_ufn2.h				\
-	$${SRC_PROJECT_PATH}/tamc200_io.h
+        "$${SRC_PROJECT_PATH}/pciedev_ufn2.h"				\
+	"$${SRC_PROJECT_PATH}/tamc200_io.h"
 
 OTHER_FILES += $${DOCS_TXT}
 OTHER_FILES += $${DOCS_MD}
 
 
 OTHER_FILES +=	\
-        $${repositoryRoot}/.gitattributes		\
-	$${repositoryRoot}/.gitignore			\
-	$${repositoryRoot}/dkms.conf			\
-	$${repositoryRoot}/LICENSE			\
-	$${repositoryRoot}/README.md			\
-	$${repositoryRoot}/src/Makefile			\
-	$${repositoryRoot}/tests/hotplug_test.Makefile	\
-	$${repositoryRoot}/tests/mmap_test.Makefile
+        "$${repositoryRoot}/.gitattributes"		\
+	"$${repositoryRoot}/.gitignore"			\
+	"$${repositoryRoot}/dkms.conf"			\
+	"$${repositoryRoot}/LICENSE"			\
+	"$${repositoryRoot}/README.md"			\
+	"$${repositoryRoot}/src/Makefile"			\
+	"$${repositoryRoot}/tests/hotplug_test.Makefile"	\
+	"$${repositoryRoot}/tests/mmap_test.Makefile"
