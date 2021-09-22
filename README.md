@@ -9,6 +9,14 @@ By getting rid of dependency from unsupported driver we will be able to maintain
 with regular `DESY` supported drivers.  
   
 ## Steps to prepare dkms pakage  
+
+### for DESY  
+```bash  
+makeDdeb -iI  
+```
+
+### In general  
+
 see: https://docs.01.org/clearlinux/latest/guides/kernel/kernel-modules-dkms.html  
   1. copy etire repository into '/usr/src' directory. The directory should ve 'tamc200-version'.   
      Current vesion is 2.0.1 . So the directory path, where content of the repository   
