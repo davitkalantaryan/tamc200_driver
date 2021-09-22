@@ -9,5 +9,6 @@
 
 #DEBHELPER#
 
+depmod -a
 modprobe tamc200
 
