@@ -65,3 +65,4 @@ Mkfile.old
 /tests/mmap_test
 /tests/hotplug_test
 /debian/*.dkms
+makeDdeb.LOCK
