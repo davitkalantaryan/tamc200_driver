@@ -14,7 +14,7 @@
  4. Slot number finding does not works correctly.  
     file:pciedev_probe_exp.c,line:~129-150 (func:pciedev_probe_exp). 
 	My tries is file:pciedev_ufn2.c,line:590,file:GetSlotNumber. 
-	tmp_parent_num is taken manually for each driver (for example for `esdadio` it is 1). 
+	tmp_parent_num is taken manually for each driver (for example for `tamc200` it is 1).
 	I think we can calculate this without this manual variable assignment.  
  5. Make error more informative.
     if (EnterCritRegion(&dev->dev_mut)){ return -ERESTARTSYS; }
