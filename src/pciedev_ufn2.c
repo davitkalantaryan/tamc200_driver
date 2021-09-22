@@ -3,7 +3,7 @@
 
 #include "pciedev_ufn.h"
 #include "pciedev_ufn2.h"
-#include "read_write_inline.h"
+//#include "read_write_inline.h"
 #include "debug_functions.h"
 
 static void unregister_upciedev_proc_new(int num, const char *dfn)

@@ -1,0 +1,17 @@
+Source: tamc200-dkms
+Section: contrib/kernel
+Priority: extra
+Maintainer: Davit Kalantaryan <davit.kalantaryan@desy.de>
+Build-Depends: debhelper (>= 7), dkms
+Standards-Version: 3.0.0
+
+Package: tamc200-dkms
+Architecture: all
+Depends: ${misc:Depends}, dkms, upciedev-dkms
+Description: kernel module for tamc200 devices
+ PCIExpress Device Driver for uTCA
+ .
+ This package contains the dkms sources. When installed, it will build
+ the module for your kernel.
+ DOOCS-EXTERN
+

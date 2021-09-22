@@ -1,0 +1,19 @@
+#!/usr/bin/make -f
+
+VERSION=$(shell dpkg-parsechangelog |grep ^Version:|cut -d ' ' -f 2)
+
+%:
+	dh $@ --with dkms
+
+override_dh_auto_build:
+	:
+
+override_dh_auto_install:
+	dh_install src/entry_tamc200_driver.c  src/linux_version_dependence.h /usr/src/tamc200-$(VERSION)/
+	dh_install src/Makefile  src/pciedev_ufn2.c  src/debug_functions.h /usr/src/tamc200-$(VERSION)/
+	dh_install src/pciedev_ufn2.h  src/tamc200_io.h /usr/src/tamc200-$(VERSION)/
+	dh_install 10-tamc200.rules /etc/udev/rules.d/
+
+override_dh_dkms:
+	dh_dkms -V $(VERSION) 
+

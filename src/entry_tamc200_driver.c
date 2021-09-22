@@ -49,7 +49,7 @@
 #include <linux/spinlock.h>
 #include <pciedev_ufn.h>
 #include "pciedev_ufn2.h"
-#include <debug_functions.h>
+#include "debug_functions.h"
 #include "tamc200_io.h"
 #include "linux_version_dependence.h"
 
