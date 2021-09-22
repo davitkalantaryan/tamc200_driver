@@ -15,6 +15,7 @@ DEFINES += __KERNEL__
 
 DOCS_TXT	= $$system($${upciedevRepoRoot}/scripts/findfiles $${repositoryRoot}/docs   .txt)
 DOCS_MD		= $$system($${upciedevRepoRoot}/scripts/findfiles $${repositoryRoot}/docs   .md)
+DEBIAN_ALL	= $$system($${upciedevRepoRoot}/scripts/findfiles $${repositoryRoot}/debian   )
 
 ARCH=arm64
 repositoryRoot = $${PWD}/../..
@@ -49,6 +50,7 @@ HEADERS +=	\
 
 OTHER_FILES += $${DOCS_TXT}
 OTHER_FILES += $${DOCS_MD}
+OTHER_FILES += $${DEBIAN_ALL}
 
 
 OTHER_FILES +=	\
